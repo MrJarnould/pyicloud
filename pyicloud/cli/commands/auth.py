@@ -43,9 +43,9 @@ def get_api_instance(username: Optional[str] = None, password: Optional[str] = N
     # Create API instance
     try:
         api = PyiCloudService(username, password)
-    except PyiCloudFailedLoginException:
+    except PyiCloudFailedLoginException as exc:
         typer.echo("Invalid username or password")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     # Handle 2FA if needed
     if api.requires_2fa:
