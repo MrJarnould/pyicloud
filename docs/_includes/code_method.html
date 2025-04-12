@@ -1,0 +1,112 @@
+{% comment %}
+  Include a code method with syntax highlighting
+  Parameters:
+  - file: path to the source file relative to the project root
+  - method: method name to look for (e.g., 'def get_api_instance')
+  - before: number of lines to include before the method (default: 0)
+  - after: number of lines to include after the method (default: 0)
+  - language: programming language for syntax highlighting (default: python)
+{% endcomment %}
+
+{% assign language = include.language | default: "python" %}
+{% assign before_lines = include.before | default: 0 %}
+{% assign after_lines = include.after | default: 0 %}
+{% capture source_file %}{% include {{ include.file }} %}{% endcapture %}
+{% assign all_lines = source_file | newline_to_br | split: '<br />' %}
+
+{% comment %}Find the method{% endcomment %}
+{% assign method_start = -1 %}
+{% assign method_end = -1 %}
+{% assign indent_level = -1 %}
+{% assign in_method = false %}
+{% assign counting_after = false %}
+{% assign after_count = 0 %}
+{% assign method_lines = "" %}
+{% assign line_count = 0 %}
+
+{% comment %}Store lines before method{% endcomment %}
+{% assign before_buffer = "" | split: ',' %}
+
+{% for line in all_lines %}
+  {% assign line_count = line_count | plus: 1 %}
+
+  {% comment %}Manage before buffer{% endcomment %}
+  {% if before_lines > 0 and method_start == -1 %}
+    {% if before_buffer.size >= before_lines %}
+      {% assign before_buffer = before_buffer | slice: 1, before_lines %}
+    {% endif %}
+    {% assign before_buffer = before_buffer | push: line %}
+  {% endif %}
+
+  {% comment %}Check if this line contains the method declaration{% endcomment %}
+  {% if method_start == -1 and line contains include.method %}
+    {% assign method_start = line_count %}
+    {% assign in_method = true %}
+
+    {% comment %}Include lines before the method{% endcomment %}
+    {% if before_lines > 0 %}
+      {% for before_line in before_buffer %}
+        {% assign method_lines = method_lines | append: before_line | append: "
+" %}
+      {% endfor %}
+    {% endif %}
+
+    {% comment %}Get the indentation level of the method{% endcomment %}
+    {% assign spaces = 0 %}
+    {% for char in line %}
+      {% if char == ' ' %}
+        {% assign spaces = spaces | plus: 1 %}
+      {% else %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+    {% assign indent_level = spaces %}
+  {% endif %}
+
+  {% if in_method %}
+    {% comment %}Check if we've exited the method based on indentation{% endcomment %}
+    {% if method_end == -1 %}
+      {% assign spaces = 0 %}
+      {% assign empty_line = true %}
+
+      {% for char in line %}
+        {% if char == ' ' %}
+          {% assign spaces = spaces | plus: 1 %}
+        {% elsif char == '' or char == '
+' or char == '	' %}
+          {% comment %}Still an empty line{% endcomment %}
+        {% else %}
+          {% assign empty_line = false %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+
+      {% if empty_line %}
+        {% comment %}Empty lines are part of the method{% endcomment %}
+        {% assign method_lines = method_lines | append: line | append: "
+" %}
+      {% elsif spaces <= indent_level and line_count > method_start %}
+        {% assign method_end = line_count | minus: 1 %}
+        {% assign in_method = false %}
+        {% assign counting_after = true %}
+      {% else %}
+        {% assign method_lines = method_lines | append: line | append: "
+" %}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+
+  {% if counting_after %}
+    {% if after_count < after_lines %}
+      {% assign method_lines = method_lines | append: line | append: "
+" %}
+      {% assign after_count = after_count | plus: 1 %}
+    {% else %}
+      {% break %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
+{% highlight {{ language }} %}
+{{ method_lines }}
+{% endhighlight %}
