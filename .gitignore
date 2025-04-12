@@ -75,3 +75,7 @@ desktop.ini
 .ruff_cache
 .pytest_cache
 .python-version
+.python-version.bak
+extract_toc.py
+pyicloud_comparison/
+pyicloud/cli/reference/
