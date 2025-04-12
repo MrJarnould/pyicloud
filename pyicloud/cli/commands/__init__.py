@@ -1,8 +1,3 @@
-"""Command modules for the PyiCloud CLI."""
+"""PyiCloud CLI commands."""
 
-# Import all command modules here for easy access
-# This makes them available for import from pyicloud.cli.commands
-from pyicloud.cli.commands import auth, hidemyemail
-
-# Explicitly define what's exported
-__all__ = ["auth", "hidemyemail"]
+from . import auth, hidemyemail
