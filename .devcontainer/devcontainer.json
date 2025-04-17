@@ -1,59 +1,92 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-	"name": "PyiCloud Dev",
-	"build": {
-		"dockerfile": "Dockerfile"
-	},
+	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	// Features to add to the dev container. More info: https://containers.dev/features.
+	"image": "mcr.microsoft.com/devcontainers/python:1-3-bookworm",
 	"features": {
+		"ghcr.io/devcontainers/features/common-utils:2": {
+			"installZsh": true,
+			"configureZshAsDefaultShell": true,
+			"installOhMyZsh": true,
+			"installOhMyZshConfig": true,
+			"upgradePackages": true,
+			"username": "vscode",
+			"userUid": "automatic",
+			"userGid": "automatic"
+		},
 		"ghcr.io/devcontainers/features/github-cli:1": {
+			"installDirectlyFromGitHubRelease": true,
 			"version": "latest"
 		},
 		"ghcr.io/devcontainers/features/java:1": {
+			"installGradle": true,
+			"installMaven": true,
+			"installAnt": true,
+			"installGroovy": true,
 			"version": "latest",
-			"jdkDistro": "open",
+			"jdkDistro": "ms",
 			"gradleVersion": "latest",
 			"mavenVersion": "latest",
 			"antVersion": "latest",
 			"groovyVersion": "latest"
 		},
 		"ghcr.io/devcontainers/features/node:1": {
+			"nodeGypDependencies": true,
+			"installYarnUsingApt": true,
 			"version": "lts",
 			"pnpmVersion": "latest",
 			"nvmVersion": "latest"
 		},
+		"ghcr.io/eitsupi/devcontainer-features/jq-likes:2": {
+			"jqVersion": "latest",
+			"yqVersion": "latest",
+			"gojqVersion": "latest",
+			"xqVersion": "latest",
+			"jaqVersion": "latest"
+		},
+		"ghcr.io/wxw-matt/devcontainer-features/command_runner:0": {},
+		"ghcr.io/wxw-matt/devcontainer-features/script_runner:0": {},
+		"ghcr.io/itsmechlark/features/1password:1": {
+			"version": "latest"
+		},
 		"ghcr.io/va-h/devcontainers-features/uv:1": {
 			"shellautocompletion": true,
 			"version": "latest"
-		}
+		},
+		"ghcr.io/gvatsal60/dev-container-features/sonarlint:1": {},
+		"ghcr.io/devcontainers-extra/features/autoenv:1": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/isort:2": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/pylint:2": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/ruff:1": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers-extra/features/zsh-plugins:0": {
+			"plugins": "ssh-agent npm",
+			"omzPlugins": "https://github.com/zsh-users/zsh-autosuggestions https://github.com/zsh-users/zsh-syntax-highlighting",
+			"username": "vscode"
+		},
+		"ghcr.io/thediveo/devcontainer-features/pin-github-action:0": {}
 	},
+
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	// "features": {},
+
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
+
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "uv venv && uv pip install -r requirements_all.txt",
+	"postCreateCommand": "sudo chmod +x .devcontainer/setup-zsh.sh && .devcontainer/setup-zsh.sh",
+
 	// Configure tool-specific properties.
 	"customizations": {
 		"vscode": {
-			"extensions": [
-				"donjayamanne.python-extension-pack",
-				"shyykoserhiy.git-autoconfig",
-				"ms-python.vscode-pylance",
-				"visualstudioexptteam.vscodeintellicode",
-				"redhat.vscode-yaml",
-				"esbenp.prettier-vscode",
-				"ms-python.pylint",
-				"ms-python.isort",
-				"ms-python.python",
-				"ryanluker.vscode-coverage-gutters",
-				"donjayamanne.git-extension-pack",
-				"github.vscode-github-actions",
-				"elagil.pre-commit-helper",
-				"sonarsource.sonarlint-vscode",
-				"charliermarsh.ruff",
-				"ms-azuretools.vscode-docker"
-			],
 			"settings": {
 				"sonarlint.ls.javaHome": "/usr/local/sdkman/candidates/java/current",
 				"editor.tabSize": 4,
@@ -66,8 +99,8 @@
 				"terminal.integrated.defaultProfile.linux": "zsh"
 			}
 		}
-	},
-	"mounts": [
-		"source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
-	]
+	}
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
 }
