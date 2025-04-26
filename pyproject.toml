@@ -69,7 +69,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyicloud"
-dynamic = ["version", "readme", "dependencies", "optional-dependencies"]
+dynamic = ["version", "readme"]
 description = "PyiCloud is a module which allows pythonistas to interact with iCloud webservices."
 requires-python = ">=3.9"
 license-files = ["LICENSE.txt"]
@@ -91,6 +91,15 @@ classifiers = [
     "Topic :: Software Development :: Libraries"
 ]
 keywords = ["icloud", "find-my-iphone"]
+dependencies = [
+    "certifi>=2024.12.14",
+    "click>=8.1.8",
+    "keyring>=25.6.0",
+    "keyrings-alt>=5.0.2",
+    "requests>=2.31.0",
+    "srp>=1.0.21",
+    "tzlocal==5.3.1",
+]
 
 
 [project.urls]
@@ -102,10 +111,21 @@ repository = "https://github.com/timlaing/pyicloud"
 [project.scripts]
 icloud = "pyicloud.cmdline:main"
 
+[dependency-groups]
+dev = [
+    "isort>=5.11.5",
+    "pre-commit>=2.21.0",
+    "pylint>=3.3.4",
+    "pylint-strict-informational>=0.1",
+    "pytest>=8.3.5",
+    "pytest-cov>=4.1.0",
+    "pytest-socket>=0.6.0",
+    "ruff>=0.9.9",
+    "tox==4.25.0",
+]
+
 [tool.setuptools]
 packages = ["pyicloud", "pyicloud.services"]
 
 [tool.setuptools.dynamic]
 readme = {file = "README.md"}
-dependencies = {file = ["requirements.txt"]}
-optional-dependencies = {test = {file = ["requirements_test.txt"]}}
