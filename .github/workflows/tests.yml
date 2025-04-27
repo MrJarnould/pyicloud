@@ -35,7 +35,7 @@ jobs:
         run: uv tool install tox --with tox-uv
 
       - name: Run tox matrix
-        run: tox
+        run: uv run tox
 
   coverage:
     name: Generate Coverage
@@ -59,7 +59,7 @@ jobs:
         run: uv sync --locked --group dev
 
       - name: Generate coverage
-        run: pytest --cov=. --cov-config=.coveragerc --cov-report xml:coverage.xml
+        run: uv run pytest --cov=. --cov-config=.coveragerc --cov-report xml:coverage.xml
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4

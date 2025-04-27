@@ -30,7 +30,7 @@ jobs:
         run: uv tool install build             # single CLI shim, cached forever
 
       - name: Build sdist & wheel
-        run: python -m build -s -w             # same as before, but environment is deterministic
+        run: uv run python -m build -s -w             # same as before, but environment is deterministic
 
       - name: Publish to PyPI
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')

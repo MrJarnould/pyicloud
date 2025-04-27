@@ -10,14 +10,21 @@
 		{
 			"label": "Unit tests",
 			"type": "shell",
-			"command": "pytest --cov=. --cov-report xml:coverage.xml",
+			"command": "uv run pytest --cov=. --cov-report xml:coverage.xml",
 			"problemMatcher": [],
 			"dependsOn": "Install requirements"
 		},
 		{
 			"label": "Reformat code",
 			"type": "shell",
-			"command": "isort . &&  ruff format",
+			"command": "uv run isort . && uv run ruff format",
+			"problemMatcher": [],
+			"dependsOn": "Install requirements"
+		},
+		{
+			"label": "Lint code",
+			"type": "shell",
+			"command": "uv run ruff check .",
 			"problemMatcher": [],
 			"dependsOn": "Install requirements"
 		}
