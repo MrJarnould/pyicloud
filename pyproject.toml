@@ -122,7 +122,8 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-socket>=0.6.0",
     "ruff>=0.9.9",
-    "tox-uv>=1.25.0"
+    "tox-uv>=1.25.0",
+    "build>=1.2.1"
 ]
 
 [tool.setuptools]
