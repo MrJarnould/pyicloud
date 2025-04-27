@@ -1,0 +1,32 @@
+name: Regenerate uv.lock for Dependabot
+on:
+  pull_request_target:
+    branches: ["dependabot/**"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write          # allow pushing back to the PR branch
+
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v1      # installs uv CLI  ✔
+        with: { enable-cache: true }
+
+      - name: Regenerate lockfile
+        run: |
+          uv lock --update
+          git config --global user.email "dependabot-lock[bot]@users.noreply.github.com"
+          git config --global user.name  "dependabot-lock[bot]"
+          git add uv.lock
+          git commit -m "ci: regenerate uv.lock after Dependabot update" || echo "Nothing to commit"
+
+      - name: Push changes
+        run: git push

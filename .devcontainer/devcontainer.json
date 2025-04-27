@@ -32,7 +32,7 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "uv sync --locked && tox",
+	"postCreateCommand": "uv sync --locked --group dev && uv tool install tox --with tox-uv && tox && echo 'if [ -f \"/workspaces/pyicloud/.venv/bin/activate\" ]; then\\nÂ  source /workspaces/pyicloud/.venv/bin/activate\\nfi' >> ~/.zshrc",
 	// Configure tool-specific properties.
 	"customizations": {
 		"vscode": {

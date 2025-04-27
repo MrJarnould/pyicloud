@@ -7,22 +7,34 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5          # provides the interpreter for build
         with:
-          python-version: '3.13'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
-      - name: Build
-        run: |
-          python -m build
-      - name: Publish a Python distribution to PyPI
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1            # downloads uv binary & adds to PATH
+        with:
+          enable-cache: true                   # optional but speeds up repeated runs
+
+      # Install runtime deps (not dev) exactly as locked
+      - name: Sync dependencies
+        run: uv sync --locked                  # guarantees reproducible build
+
+      # Install the build front-end as an isolated tool
+      - name: Install build tool
+        run: uv tool install build             # single CLI shim, cached forever
+
+      - name: Build sdist & wheel
+        run: python -m build -s -w             # same as before, but environment is deterministic
+
+      - name: Publish to PyPI
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@release/v1   # unchanged
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
