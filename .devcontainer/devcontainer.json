@@ -26,7 +26,7 @@
 		},
 		"ghcr.io/va-h/devcontainers-features/uv:1": {
 			"shellautocompletion": true,
-			"version": "latest"
+			"version": "0.6.17"
 		}
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.

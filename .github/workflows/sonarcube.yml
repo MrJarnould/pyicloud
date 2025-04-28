@@ -40,3 +40,8 @@ jobs:
             -Dsonar.pullrequest.key=${{ github.event.workflow_run.pull_requests[0].number }}
             -Dsonar.pullrequest.branch=${{ github.event.workflow_run.pull_requests[0].head.ref }}
             -Dsonar.pullrequest.base=${{ github.event.workflow_run.pull_requests[0].base.ref }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: '0.6.17'
+          enable-cache: true

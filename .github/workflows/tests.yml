@@ -68,3 +68,27 @@ jobs:
         with:
           name: code-coverage
           path: coverage.xml
+
+  compatibility:
+    name: Compatibility Test (Python 3.9)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: '0.6.17'
+          enable-cache: true
+
+      - name: Sync dependencies for Python 3.9
+        run: uv sync --locked --python-version 3.9 --group dev
+
+      - name: Run basic tests
+        run: uv run pytest -xvs tests/test_base.py

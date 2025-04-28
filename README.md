@@ -25,6 +25,31 @@ webservices. It\'s powered by the fantastic
 At its core, PyiCloud connects to iCloud using your username and
 password, then performs calendar and iPhone queries against their API.
 
+## Getting Started
+
+There are multiple ways to install **PyiCloud** depending on how you like to
+manage Python environments:
+
+| Scenario | Command |
+|----------|---------|
+| Install latest from GitHub (pip) | `pip install git+https://github.com/timlaing/pyicloud` |
+| Install latest from GitHub (**uv** shim) | `uv pip install git+https://github.com/timlaing/pyicloud` |
+| Stand-alone CLI via **pipx** | `pipx install git+https://github.com/timlaing/pyicloud` |
+| Editable install for local development | `git clone https://github.com/timlaing/pyicloud.git && cd pyicloud && uv pip install -e .` |
+
+If your project already uses **uv**, you can add the library directly from
+GitHub (note the explicit VCS reference):
+
+```bash
+uv add "pyicloud@git+https://github.com/timlaing/pyicloud.git"
+```
+
+To confirm the CLI is on your `$PATH` run:
+
+```bash
+icloud --help
+```
+
 ## Authentication
 
 Authentication without using a saved password is as simple as passing
@@ -668,4 +693,65 @@ print(f"Deleted alias: {deleted}")
 ## Examples
 
 If you want to see some code samples, see the [examples](/examples.py).
-`
+
+## Contribute
+
+We :sparkles: contributions!  The project is fully wired for a **uv + tox**
+workflow and enforces formatting & linting with **Ruff**, **isort**, and
+`pre-commit` hooks.
+
+### Prerequisites
+
+* Python 3.9 – 3.13
+* [uv](https://github.com/astral-sh/uv) ≥ 0.6.17 (install script: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+
+### Bootstrap a dev environment (with or without Dev Containers)
+
+```bash
+# Clone the repository
+git clone https://github.com/timlaing/pyicloud.git
+cd pyicloud
+
+# Create the virtual-environment & install dev dependencies
+uv sync --locked --group dev
+
+# (optional) activate the env for interactive work
+source .venv/bin/activate
+```
+
+#### VS Code Dev Container (recommended)
+
+This repository ships with a fully-configured **devcontainer**. If you have
+the [Dev Containers](https://aka.ms/devcontainers) extension installed:
+
+1. Clone the repo locally.
+2. Open the folder in VS Code.
+3. When prompted, choose **"Reopen in Container"** (or hit <kbd>F1</kbd> →
+   **Dev Containers: Reopen in Container**).
+
+The first build installs uv 0.6.17, syncs the **dev** dependency group, and
+runs the test suite automatically. Subsequent starts are cached and take only
+seconds.
+
+Common tasks (tests, linters, etc.) are exposed as **VS Code tasks**—open the
+Command Palette and run **"Tasks: Run Task"** to see what's available.
+
+> **Tip**  If you need to rebuild the container (for example, after modifying
+> `Dockerfile` or `.devcontainer/devcontainer.json`), use **Dev Containers →
+> Rebuild Container**.
+
+### Common tasks
+
+| Task | Command |
+|------|---------|
+| Run unit tests | `uv run pytest` |
+| Run the full tox matrix | `uv run tox` |
+| Static analysis & formatting | `uv run isort . && uv run ruff check . && uv run ruff format --check` |
+| Install git hooks | `uv run pre-commit install` |
+| Add a dev dependency | `uv add <package> --group dev` |
+| Regenerate the lockfile | `uv lock` |
+
+The CI pipeline mirrors these commands; be sure they pass locally before
+opening a pull-request.  Commit messages should follow the
+[Conventional Commits](https://www.conventionalcommits.org/) spec to keep the
+changelog machine-friendly.

@@ -19,6 +19,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v1            # downloads uv binary & adds to PATH
         with:
+          version: '0.6.17'
           enable-cache: true                   # optional but speeds up repeated runs
 
       # Install runtime deps (not dev) exactly as locked
