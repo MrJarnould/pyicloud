@@ -26,6 +26,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v1
         with:
+          version: '0.6.17'
           enable-cache: true
 
       - name: Sync project (dev group)
@@ -53,6 +54,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v1
         with:
+          version: '0.6.17'
           enable-cache: true
 
       - name: Sync project (dev group)
