@@ -18,6 +18,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v1
         with:
+          version: '0.6.17'
           enable-cache: true
 
       # Create .venv from the lockfile (dev group installs linter/formatter)
