@@ -44,7 +44,7 @@ addopts = ["--disable-socket", "--allow-unix-socket"]
 profile = "black"
 
 [tool.tox]
-requires = ["tox>=4.24.1", "tox-uv>=0.5.0"]
+requires = ["tox>=4.24.1", "tox-uv>=0.5.0", "tox-gh-actions>=3.3.0"]
 env_list = ["lint", "3.13", "3.12", "3.11", "3.10", "3.9"]
 
 [tool.tox.env_run_base]
@@ -123,6 +123,7 @@ dev = [
     "pytest-socket>=0.6.0",
     "ruff>=0.9.9",
     "tox-uv>=1.25.0",
+    "tox-gh-actions>=3.3.0",
     "build>=1.2.1"
 ]
 
