@@ -115,7 +115,6 @@ icloud = "pyicloud.cmdline:main"
 [dependency-groups]
 dev = [
     "isort>=5.11.5",
-    "pre-commit>=2.21.0",
     "pylint>=3.3.4",
     "pylint-strict-informational>=0.1",
     "pytest>=8.3.5",
