@@ -16,7 +16,7 @@ jobs:
 
       # 2) Install uv CLI (puts uv + tool wrappers on PATH)
       - name: Set up uv
-        uses: astral-sh/setup-uv@v1
+        uses: astral-sh/setup-uv@v6 # use latest version to fix GitHub's new cache service – see https://gh.io/gha-cache-sunset
         with:
           version: '0.6.17'
           enable-cache: true        # speeds up repeated runs

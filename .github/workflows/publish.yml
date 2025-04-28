@@ -17,7 +17,7 @@ jobs:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v1            # downloads uv binary & adds to PATH
+        uses: astral-sh/setup-uv@v6            # adds latest uv version to PATH
         with:
           version: '0.6.17'
           enable-cache: true                   # optional but speeds up repeated runs
