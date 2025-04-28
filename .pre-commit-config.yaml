@@ -3,6 +3,11 @@
 # Note: This project uses uv for dependency management
 # After updating hooks, run: uv lock
 repos:
+    # Keep uv.lock fresh whenever pyproject.toml changes
+    - repo: https://github.com/astral-sh/uv-pre-commit
+      rev: 0.6.17
+      hooks:
+          - id: uv-lock
     - repo: https://github.com/pre-commit/pre-commit-hooks
       rev: v5.0.0
       hooks:
