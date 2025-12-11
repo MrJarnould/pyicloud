@@ -115,6 +115,11 @@ repository = "https://github.com/timlaing/pyicloud"
 [project.scripts]
 icloud = "pyicloud.cmdline:main"
 
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.76.0",
+]
+
 [tool.setuptools]
 packages = ["pyicloud", "pyicloud.services"]
 

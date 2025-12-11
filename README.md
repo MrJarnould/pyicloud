@@ -827,6 +827,27 @@ deleted = api.hidemyemail.delete(anonymous_id)
 print(f"Deleted alias: {deleted}")
 ```
 
+## Notes
+
+You can access your iCloud Notes through the `notes` property.
+
+```python
+# Fetch the 5 most recent notes
+for note in api.notes.recents(limit=5):
+    print(f"Title: {note.title}")
+    print(f"Snippet: {note.snippet}")
+
+    # Get the full note, including rendered HTML content
+    full_note = api.notes.get(note.id, render_html=True)
+    if full_note.html:
+        print("--- HTML Content ---")
+        print(full_note.html)
+        print("--------------------")
+
+```
+
+For a more detailed example, see [`examples/notes.py`](/examples/notes.py).
+
 ## Examples
 
 If you want to see some code samples, see the [examples](/examples.py).
