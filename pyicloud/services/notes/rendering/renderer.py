@@ -887,3 +887,18 @@ def render_note_page(title: str, html_fragment: str, extra_css: str = "") -> str
         "}"
         f'{extra_css}</style><div class="note-content">{html_fragment}</div>'
     )
+
+
+class NoteRenderer:
+    """Class-based interface for note rendering."""
+
+    def __init__(self, config: Optional[ExportConfig] = None):
+        self.config = config or ExportConfig()
+
+    def render(self, note: pb.Note, datasource: Optional[NoteDataSource] = None) -> str:
+        """Render the note body to an HTML fragment string."""
+        return render_note_fragment(note, datasource, config=self.config)
+
+    def render_full_page(self, title: str, html_fragment: str) -> str:
+        """Wrap an HTML fragment in a full page with CSS."""
+        return render_note_page(title, html_fragment)

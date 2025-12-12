@@ -21,7 +21,7 @@ from ..models.cloudkit import CKRecord
 from ..protobuf import notes_pb2 as pb
 from .ck_datasource import CloudKitNoteDataSource
 from .options import ExportConfig
-from .renderer import render_note_fragment, render_note_page
+from .renderer import NoteRenderer, render_note_fragment, render_note_page
 
 console = Console()
 
@@ -111,6 +111,8 @@ def build_datasource(
                 mresp = ck_client.lookup(list(media_map.keys()))
                 if bool(getattr(config, "debug", False)):
                     try:
+                        console.rule("media lookup response")
+                        console.print(mresp)
                         LOGGER.info("attachment media resp:\n%s", mresp)
                     except Exception:
                         pass
@@ -152,23 +154,31 @@ def build_datasource(
                                 or "mpeg" in parent_uti
                             )
 
-                            if getattr(conf, "prefer_media_for_images", True) and (
-                                is_image or is_av
-                            ):
-                                # Prefer full-fidelity Media over PreviewImages.
-                                # If a PrimaryAsset was already chosen as primary, keep it.
-                                # If primary is missing OR equal to the thumbnail (likely a preview),
-                                # promote Media asset to primary.
-                                try:
-                                    cur_primary = ds.get_primary_asset_url(parent)
-                                except Exception:
-                                    cur_primary = None
+                            # Logic update:
+                            # 1. If we have no URL yet (e.g. VCard), ALWAYS take the Media URL.
+                            # 2. If we have a URL but it's an Image/AV, check if we should "upgrade"
+                            #    to the Media URL (e.g. valid preview -> full res).
+
+                            is_media_upgrade = getattr(
+                                conf, "prefer_media_for_images", True
+                            ) and (is_image or is_av)
+
+                            # Only fetch current if we might need to check for upgrade
+                            cur_primary = None
+                            try:
+                                cur_primary = ds.get_primary_asset_url(parent)
+                            except Exception:
+                                pass
+
+                            if (not cur_primary) or is_media_upgrade:
                                 try:
                                     cur_thumb = ds.get_thumbnail_url(parent)
                                 except Exception:
                                     cur_thumb = None
+
+                                # If missing, OR (we want upgrade AND current is likely just a thumbnail)
                                 if (not cur_primary) or (
-                                    cur_thumb and cur_primary == cur_thumb
+                                    is_media_upgrade and cur_primary == cur_thumb
                                 ):
                                     ds.set_primary_asset_url(parent, url)
             except Exception:
@@ -496,3 +506,66 @@ def write_html(
     with open(path, "w", encoding="utf-8") as f:
         f.write(page)
     return path
+
+
+class NoteExporter:
+    """Orchestrator for exporting notes to HTML with assets."""
+
+    def __init__(self, ck_client, config: Optional[ExportConfig] = None):
+        self.client = ck_client
+        self.config = config or ExportConfig()
+        self.renderer = NoteRenderer(self.config)
+
+    def export(
+        self,
+        note_record: CKRecord,
+        output_dir: str,
+        filename: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Export a single note record to HTML in the output directory.
+        Returns the path to the written HTML file, or None if export failed (e.g. no body).
+        """
+        # 1. Decode
+        note = decode_and_parse_note(note_record)
+        if not note:
+            return None
+
+        # 2. Build Datasource
+        ds, att_ids = build_datasource(self.client, note_record, note, self.config)
+
+        # 3. Download Assets
+        # Use a sub-folder based on the note ID to avoid collisions
+        assets_dir = os.path.join(output_dir, "assets", note_record.recordName)
+
+        download_pdf_assets(
+            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
+        )
+        download_image_assets(
+            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
+        )
+        download_av_assets(
+            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
+        )
+        download_vcard_assets(
+            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
+        )
+
+        # 4. Render
+        html_fragment = self.renderer.render(note, ds)
+
+        # 5. Write
+        title = "Untitled"
+        title_enc = note_record.fields.get_value("TitleEncrypted")
+        if title_enc:
+            try:
+                if isinstance(title_enc, bytes):
+                    title = title_enc.decode("utf-8")
+                elif isinstance(title_enc, str):
+                    title = title_enc
+            except Exception:
+                pass
+
+        return write_html(
+            title, html_fragment, output_dir, full_page=True, filename=filename
+        )

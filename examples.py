@@ -431,6 +431,15 @@ def display_account(api: PyiCloudService) -> None:
     print(END_LIST)
 
 
+def display_notes(api: PyiCloudService) -> None:
+    """Display notes info"""
+    print("List of recent notes:")
+    notes = list(api.notes.recents(limit=MAX_DISPLAY))
+    for idx, note in enumerate(notes):
+        print(f"\t{idx}: {note.title} ({note.modified_at})")
+    print(END_LIST)
+
+
 def display_hidemyemail(api: PyiCloudService) -> None:
     """Display Hide My Email info"""
 
@@ -500,7 +509,12 @@ def main() -> None:
 
         display_account(api)
         display_devices(api)
+        display_devices(api)
         display_hidemyemail(api)
+        try:
+            display_notes(api)
+        except PyiCloudServiceUnavailable as error:
+            print(f"Notes service not available: {error}\n")
         try:
             display_calendars(api)
         except PyiCloudServiceUnavailable as error:

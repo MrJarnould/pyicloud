@@ -151,7 +151,8 @@ class _AudioRenderer(_Renderer):
             )
             attr_html = " ".join(f'{k}="{html.escape(v)}"' for k, v in attrs.items())
             return f"<audio controls {attr_html}></audio>"
-        # title = ctx.title or ctx.uti or "audio"
+        title = ctx.title or ctx.uti or "audio"
+        return h("a", **ctx.base_attrs({"class": "attachment link"}))(title).render()
 
 
 class _VideoRenderer(_Renderer):

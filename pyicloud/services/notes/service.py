@@ -399,6 +399,68 @@ class NotesService(BaseService):
         LOGGER.debug("Fetching sync cursor for Notes zone")
         return self._raw.current_sync_token(zone_name="Notes")
 
+    def export_note(self, note_id: str, output_dir: str, **config_kwargs) -> str:
+        """
+        Export a note to HTML with assets saved to the output directory.
+
+        Args:
+            note_id: The UUID of the note to export.
+            output_dir: Local directory to save the HTML and assets.
+            **config_kwargs: Options for ExportConfig (e.g. embed_images, link_rel).
+
+        Returns:
+            Path to the generated HTML file.
+        """
+        resp = self._raw.lookup([note_id])
+        target = None
+        for rec in resp.records:
+            if isinstance(rec, CKRecord) and rec.recordName == note_id:
+                target = rec
+                break
+        if not target:
+            raise NoteNotFound(f"Note not found: {note_id}")
+
+        # Lazy import to avoid circular dependency
+        from .rendering.exporter import NoteExporter
+        from .rendering.options import ExportConfig
+
+        config = ExportConfig(**config_kwargs)
+        exporter = NoteExporter(self._raw, config=config)
+        path = exporter.export(target, output_dir=output_dir)
+        if not path:
+            raise NotesError(f"Failed to export note: {note_id}")
+        return path
+
+    def render_note(self, note_id: str, **config_kwargs) -> str:
+        """
+        Render a note to an HTML fragment string (does not download assets).
+
+        Args:
+            note_id: The UUID of the note to render.
+            **config_kwargs: Options for ExportConfig.
+        """
+        resp = self._raw.lookup([note_id])
+        target = None
+        for rec in resp.records:
+            if isinstance(rec, CKRecord) and rec.recordName == note_id:
+                target = rec
+                break
+        if not target:
+            raise NoteNotFound(f"Note not found: {note_id}")
+
+        from .rendering.exporter import build_datasource, decode_and_parse_note
+        from .rendering.options import ExportConfig
+        from .rendering.renderer import NoteRenderer
+
+        config = ExportConfig(**config_kwargs)
+        note = decode_and_parse_note(target)
+        if not note:
+            return ""
+
+        ds, _ = build_datasource(self._raw, target, note, config)
+        renderer = NoteRenderer(config)
+        return renderer.render(note, ds)
+
     def iter_changes(self, *, since: Optional[str] = None) -> Iterable[ChangeEvent]:
         """
         Iterate change events since an optional sync token.
