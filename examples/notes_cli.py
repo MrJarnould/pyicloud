@@ -12,7 +12,11 @@ import argparse
 import logging
 import os
 import re
+import sys
 from typing import Any, List, Optional
+
+# Ensure pyicloud can be imported when running from examples/ directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from rich.console import Console
 from rich.logging import RichHandler
