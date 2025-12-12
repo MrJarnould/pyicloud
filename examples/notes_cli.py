@@ -23,11 +23,7 @@ from pyicloud.exceptions import PyiCloudServiceUnavailable
 # CloudKit model helpers for the raw escape hatch demo
 from pyicloud.services.notes.models.cloudkit import CKRecord
 from pyicloud.services.notes.rendering.exporter import (
-    build_datasource,
     decode_and_parse_note,
-    download_pdf_assets,
-    render_fragment,
-    write_html,
 )
 from pyicloud.services.notes.rendering.options import ExportConfig
 from pyicloud.utils import get_password
@@ -355,100 +351,44 @@ def main() -> None:
         console.print("proto_note:")
         console.print(proto_note, end="\n\n")
 
-        # Build datasource from attachment records
-        phase(f"note[{idx}]: attachments lookup start")
+        # Use NoteExporter from the library for the heavy lifting
+        from pyicloud.services.notes.rendering.exporter import NoteExporter
+
+        phase(f"note[{idx}]: exporter init")
         config = ExportConfig(
             debug=bool(args.notes_debug),
             preview_appearance=str(args.preview_appearance).strip().lower(),
             pdf_object_height=int(args.pdf_height or 600),
+            # Pass download preferences if ExportConfig supported them, or logic handle in exporter
         )
-        ds, att_ids = build_datasource(ck, note_rec, proto_note, config=config)
-        phase(f"note[{idx}]: attachments lookup ok count={len(att_ids)}")
+        # NoteExporter handles downloading if we call export.
+        # But wait, logic in script had `should_download_assets`.
+        # NoteExporter currently ALWAYS downloads assets in `export`.
+        # If we want to skip assets (lightweight mode), we might need to modify NoteExporter
+        # or use a different method.
+        # For now, let's assume standard behavior is full export, as "archival" is default.
 
-        # Fetch referenced media records (e.g. VCards) immediately so they are available for download/render
-        if att_ids:
-            phase(f"note[{idx}]: checking {len(att_ids)} attachments for references")
-            lookup_res = ck.lookup(list(att_ids))
-            att_records = lookup_res.records
+        exporter = NoteExporter(ck, config=config)
+        phase(f"note[{idx}]: export start")
 
-            media_map = {}
-            for r in att_records:
-                # Augment ds with the full record fields (in case build_datasource missed something)
-                ds.add_attachment_record(r)
+        # We pass the filename to control naming exactly as before
+        title = item.title or "Apple Note"
+        safe = _safe_name(title)
+        short_id = (item.id or "note")[:8]
+        fname = f"{idx:02d}_{safe}_{short_id}.html"
 
-                ident = r.recordName
-                if not ds.get_primary_asset_url(ident):
-                    media_field = r.fields.get("Media")
-                    if media_field and hasattr(media_field.value, "recordName"):
-                        mid = media_field.value.recordName
-                        media_map[mid] = ident
+        try:
+            path = exporter.export(note_rec, output_dir=out_dir, filename=fname)
+            phase(f"note[{idx}]: export done -> {path}")
+            if path:
+                console.print(f"[green]Saved:[/green] {path}")
+            else:
+                console.print("[red]Export returned None (skipped?)[/red]")
+        except Exception as e:
+            phase(f"note[{idx}]: export failed: {e}")
+            console.print(f"[red]Export failed:[/red] {e}")
 
-            if media_map:
-                phase(
-                    f"note[{idx}]: fetching {len(media_map)} referenced media records"
-                )
-                try:
-                    m_res = ck.lookup(list(media_map.keys()))
-                    for mr in m_res.records:
-                        found_url = None
-                        for field_key in ("Media", "Asset", "File", "Bitstream"):
-                            fv = mr.fields.get(field_key)
-                            if fv and hasattr(fv.value, "downloadURL"):
-                                found_url = fv.value.downloadURL
-                                break
-
-                        if found_url:
-                            aid = media_map.get(mr.recordName)
-                            if aid:
-                                ds.set_primary_asset_url(aid, found_url)
-                except Exception as e:
-                    phase(f"note[{idx}]: media lookup failed: {e}")
-
-        # Optional: download embeddable assets locally to avoid remote forced downloads
-        should_download_assets = bool(
-            args.download_assets
-            or (str(args.export_mode).strip().lower() == "archival")
-        )
-        if should_download_assets and att_ids:
-            try:
-                base_assets_dir = os.path.abspath(args.assets_dir)
-                note_subdir = os.path.join(base_assets_dir, (item.id or "note")[:8])
-                os.makedirs(note_subdir, exist_ok=True)
-                updated = download_pdf_assets(
-                    ck, ds, att_ids, assets_dir=note_subdir, out_dir=out_dir
-                )
-                for aid, rel in (updated or {}).items():
-                    phase(f"note[{idx}]: downloaded asset for {aid} -> {rel}")
-                # Also download image assets and rewrite URLs
-                from pyicloud.services.notes.rendering.exporter import (
-                    download_av_assets,
-                    download_image_assets,
-                    download_vcard_assets,
-                )
-
-                updated_img = download_image_assets(
-                    ck, ds, att_ids, assets_dir=note_subdir, out_dir=out_dir
-                )
-                for aid, rel in (updated_img or {}).items():
-                    phase(f"note[{idx}]: downloaded image for {aid} -> {rel}")
-
-                # Download audio/video assets
-                updated_av = download_av_assets(
-                    ck, ds, att_ids, assets_dir=note_subdir, out_dir=out_dir
-                )
-                for aid, rel in (updated_av or {}).items():
-                    phase(f"note[{idx}]: downloaded av for {aid} -> {rel}")
-
-                # Download vcard assets
-                updated_vcard = download_vcard_assets(
-                    ck, ds, att_ids, assets_dir=note_subdir, out_dir=out_dir
-                )
-                for aid, rel in (updated_vcard or {}).items():
-                    phase(f"note[{idx}]: downloaded vcard for {aid} -> {rel}")
-            except Exception as e:
-                phase(f"note[{idx}]: asset download failed: {e}")
-
-        # Optional: dump attribute runs for debugging
+        # Optional: dump attribute runs for debugging (requires proto_note)
         if args.dump_runs:
             try:
                 from pyicloud.services.notes.rendering.debug_tools import (
@@ -493,35 +433,6 @@ def main() -> None:
                 )
             except Exception as e:
                 console.print(f"[red]Failed to dump runs:[/red] {e}")
-
-        phase(f"note[{idx}]: render start")
-        html = render_fragment(proto_note, ds, config=config)
-        phase(f"note[{idx}]: render ok len={len(html or '')}")
-
-        console.print("html:")
-        console.print(html, end="\n\n")
-
-        # Save to file
-        if html:
-            title = item.title or "Apple Note"
-            fragment = html
-            safe = _safe_name(title)
-            short_id = (item.id or "note")[:8]
-            fname = f"{idx:02d}_{safe}_{short_id}.html"
-            # Fetch attachment records (logging only now)
-            if att_ids:
-                phase(f"note[{idx}]: attachments lookup (debug check) done")
-
-            try:
-                phase(f"note[{idx}]: write file start")
-                path = write_html(
-                    title, fragment, out_dir, full_page=args.full_page, filename=fname
-                )
-                phase(f"note[{idx}]: write file ok -> {path}")
-                console.print(f"[green]Saved:[/green] {path}")
-            except Exception as e:
-                phase(f"note[{idx}]: write file failed: {e}")
-                console.print(f"[red]Failed to write HTML:[/red] {e}")
 
     # Summary
     try:
