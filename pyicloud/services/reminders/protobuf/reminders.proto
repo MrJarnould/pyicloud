@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package pyicloud.services.reminders.protobuf;
+
+message TitleDocument {
+  Title title = 2;
+}
+
+message Title {
+  TitleContent content = 3;
+}
+
+message TitleContent {
+  string text = 2;
+}
