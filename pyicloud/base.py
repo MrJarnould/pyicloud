@@ -46,6 +46,7 @@ from pyicloud.services import (
     RemindersService,
     UbiquityService,
 )
+from pyicloud.services.notes import NotesService
 from pyicloud.session import PyiCloudSession
 from pyicloud.srp_password import SrpPassword, SrpProtocolType
 from pyicloud.utils import (
@@ -201,6 +202,7 @@ class PyiCloudService:
         self._hidemyemail: Optional[HideMyEmailService] = None
         self._photos: Optional[PhotosService] = None
         self._reminders: Optional[RemindersService] = None
+        self._notes: Optional[NotesService] = None
 
         self._requires_mfa: bool = False
 
@@ -956,6 +958,23 @@ class PyiCloudService:
                     "Drive service not available"
                 ) from error
         return self._drive
+
+    @property
+    def notes(self) -> NotesService:
+        """Gets the 'Notes' service."""
+        if not self._notes:
+            try:
+                service_root: str = self.get_webservice_url("ckdatabasews")
+                self._notes = NotesService(
+                    service_root=service_root,
+                    session=self.session,
+                    params=self.params,
+                )
+            except (PyiCloudAPIResponseException,) as error:
+                raise PyiCloudServiceUnavailable(
+                    "Notes service not available"
+                ) from error
+        return self._notes
 
     @property
     def account_name(self) -> str:

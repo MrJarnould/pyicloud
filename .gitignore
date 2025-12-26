@@ -78,3 +78,11 @@ desktop.ini
 uv.lock
 fetch_devices_*.py
 *.jpg
+
+# Workspace
+/workspace/
+
+# Security excludes
+*_examples/
+sample_*.json
+test_real_data.py
