@@ -15,7 +15,7 @@ from typing import Dict, Iterable, Iterator, List, Optional
 
 from pydantic import ValidationError
 
-from .models.cloudkit import (
+from pyicloud.common.cloudkit import (
     CKFVString,
     CKLookupDescriptor,
     CKLookupRequest,

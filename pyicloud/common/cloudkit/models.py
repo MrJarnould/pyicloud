@@ -22,7 +22,7 @@ from pydantic import (
     model_validator,
 )
 
-from ._ck_base import CKModel
+from .base import CKModel
 
 # ---------------------------------------------------------------------------
 # Shared helpers
