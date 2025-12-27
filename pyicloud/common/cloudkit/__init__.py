@@ -2,7 +2,6 @@
 
 from .base import CKModel
 from .models import (
-    CKDesiredKey,
     CKErrorItem,
     CKFieldOpen,
     CKFVString,
@@ -28,7 +27,6 @@ from .models import (
 
 __all__ = [
     "CKModel",
-    "CKDesiredKey",
     "CKErrorItem",
     "CKFieldOpen",
     "CKFVString",

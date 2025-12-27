@@ -21,7 +21,6 @@ import logging
 from typing import Dict, Iterable, Iterator, List, Optional
 
 from pyicloud.common.cloudkit import (
-    CKDesiredKey,
     CKErrorItem,
     CKFVString,
     CKLookupResponse,
@@ -47,6 +46,7 @@ from .client import (
 )
 from .domain import AttachmentId, NoteBody
 from .models import Attachment, Note, NoteSummary
+from .models.constants import NotesDesiredKey
 from .models.dto import ChangeEvent, NoteFolder
 
 LOGGER = logging.getLogger(__name__)
@@ -108,15 +108,15 @@ class NotesService(BaseService):
             return
 
         desired_keys = [
-            CKDesiredKey.TITLE_ENCRYPTED,
-            CKDesiredKey.SNIPPET_ENCRYPTED,
-            CKDesiredKey.MODIFICATION_DATE,
-            CKDesiredKey.DELETED,
-            CKDesiredKey.FOLDER,
-            CKDesiredKey.FIRST_ATTACHMENT_UTI_ENCRYPTED,
-            CKDesiredKey.FIRST_ATTACHMENT_THUMBNAIL,
-            CKDesiredKey.FIRST_ATTACHMENT_THUMBNAIL_ORIENTATION,
-            CKDesiredKey.ATTACHMENTS,
+            NotesDesiredKey.TITLE_ENCRYPTED,
+            NotesDesiredKey.SNIPPET_ENCRYPTED,
+            NotesDesiredKey.MODIFICATION_DATE,
+            NotesDesiredKey.DELETED,
+            NotesDesiredKey.FOLDER,
+            NotesDesiredKey.FIRST_ATTACHMENT_UTI_ENCRYPTED,
+            NotesDesiredKey.FIRST_ATTACHMENT_THUMBNAIL,
+            NotesDesiredKey.FIRST_ATTACHMENT_THUMBNAIL_ORIENTATION,
+            NotesDesiredKey.ATTACHMENTS,
         ]
         query = CKQueryObject(
             recordType="SearchIndexes",
@@ -197,12 +197,12 @@ class NotesService(BaseService):
                 desiredRecordTypes=["Note"],
                 desiredKeys=self._coerce_keys(
                     [
-                        CKDesiredKey.TITLE_ENCRYPTED,
-                        CKDesiredKey.SNIPPET_ENCRYPTED,
-                        CKDesiredKey.MODIFICATION_DATE,
-                        CKDesiredKey.DELETED,
-                        CKDesiredKey.FOLDER,
-                        CKDesiredKey.ATTACHMENTS,
+                        NotesDesiredKey.TITLE_ENCRYPTED,
+                        NotesDesiredKey.SNIPPET_ENCRYPTED,
+                        NotesDesiredKey.MODIFICATION_DATE,
+                        NotesDesiredKey.DELETED,
+                        NotesDesiredKey.FOLDER,
+                        NotesDesiredKey.ATTACHMENTS,
                     ]
                 ),
                 syncToken=since,
@@ -219,7 +219,7 @@ class NotesService(BaseService):
         Enumerate top-level Notes folders. Use to build navigation UIs or resolve folder IDs.
         """
         desired_keys = [
-            CKDesiredKey.TITLE_ENCRYPTED,
+            NotesDesiredKey.TITLE_ENCRYPTED,
             "TitleModificationDate",
             "HasSubfolder",
         ]
@@ -281,15 +281,15 @@ class NotesService(BaseService):
                 desiredRecordTypes=["Note"],
                 desiredKeys=self._coerce_keys(
                     [
-                        CKDesiredKey.TITLE_ENCRYPTED,
-                        CKDesiredKey.SNIPPET_ENCRYPTED,
-                        CKDesiredKey.MODIFICATION_DATE,
-                        CKDesiredKey.DELETED,
-                        CKDesiredKey.FOLDER,
-                        CKDesiredKey.FIRST_ATTACHMENT_UTI_ENCRYPTED,
-                        CKDesiredKey.FIRST_ATTACHMENT_THUMBNAIL,
-                        CKDesiredKey.FIRST_ATTACHMENT_THUMBNAIL_ORIENTATION,
-                        CKDesiredKey.ATTACHMENTS,
+                        NotesDesiredKey.TITLE_ENCRYPTED,
+                        NotesDesiredKey.SNIPPET_ENCRYPTED,
+                        NotesDesiredKey.MODIFICATION_DATE,
+                        NotesDesiredKey.DELETED,
+                        NotesDesiredKey.FOLDER,
+                        NotesDesiredKey.FIRST_ATTACHMENT_UTI_ENCRYPTED,
+                        NotesDesiredKey.FIRST_ATTACHMENT_THUMBNAIL,
+                        NotesDesiredKey.FIRST_ATTACHMENT_THUMBNAIL_ORIENTATION,
+                        NotesDesiredKey.ATTACHMENTS,
                     ]
                 ),
                 reverse=True,  # newest first
@@ -323,12 +323,12 @@ class NotesService(BaseService):
             record_names=[note_id],
             desired_keys=self._coerce_keys(
                 [
-                    CKDesiredKey.TITLE_ENCRYPTED,
-                    CKDesiredKey.SNIPPET_ENCRYPTED,
-                    CKDesiredKey.MODIFICATION_DATE,
-                    CKDesiredKey.DELETED,
-                    CKDesiredKey.FOLDER,
-                    CKDesiredKey.ATTACHMENTS,
+                    NotesDesiredKey.TITLE_ENCRYPTED,
+                    NotesDesiredKey.SNIPPET_ENCRYPTED,
+                    NotesDesiredKey.MODIFICATION_DATE,
+                    NotesDesiredKey.DELETED,
+                    NotesDesiredKey.FOLDER,
+                    NotesDesiredKey.ATTACHMENTS,
                     "TextDataEncrypted",  # may or may not be present
                 ]
             ),
@@ -473,12 +473,12 @@ class NotesService(BaseService):
                 desiredRecordTypes=["Note"],
                 desiredKeys=self._coerce_keys(
                     [
-                        CKDesiredKey.TITLE_ENCRYPTED,
-                        CKDesiredKey.SNIPPET_ENCRYPTED,
-                        CKDesiredKey.MODIFICATION_DATE,
-                        CKDesiredKey.DELETED,
-                        CKDesiredKey.FOLDER,
-                        CKDesiredKey.ATTACHMENTS,
+                        NotesDesiredKey.TITLE_ENCRYPTED,
+                        NotesDesiredKey.SNIPPET_ENCRYPTED,
+                        NotesDesiredKey.MODIFICATION_DATE,
+                        NotesDesiredKey.DELETED,
+                        NotesDesiredKey.FOLDER,
+                        NotesDesiredKey.ATTACHMENTS,
                     ]
                 ),
                 syncToken=since,
@@ -551,7 +551,7 @@ class NotesService(BaseService):
             return None
         out: List[str] = []
         for k in keys:
-            if isinstance(k, CKDesiredKey):
+            if isinstance(k, NotesDesiredKey):
                 out.append(k.value)
             else:
                 out.append(str(k))
