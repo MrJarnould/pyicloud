@@ -1,5 +1,5 @@
 """
-CloudKit “wire” models for /records/query requests & responses (Notes container).
+CloudKit “wire” models for /records/query requests & responses.
 - Response models (records) + refined request models (query payloads).
 """
 
@@ -438,12 +438,6 @@ class CKFields(dict[str, CKFieldOpen]):
 # ---------------------------------------------------------------------------
 
 
-class CKRecordType(str, Enum):
-    Note = "Note"
-    Folder = "Folder"
-    PasswordProtectedNote = "PasswordProtectedNote"
-
-
 class CKRecord(CKModel):
     """
     A CloudKit record as returned in /records/query for Notes.
@@ -454,7 +448,7 @@ class CKRecord(CKModel):
     """
 
     recordName: str
-    recordType: Union[CKRecordType, str]  # allow unknown record types
+    recordType: str  # allow unknown record types
 
     # App-level fields (typed wrappers)
     fields: CKFields = Field(default_factory=CKFields)
@@ -689,28 +683,6 @@ class CKQueryObject(CKModel):
     sortBy: Optional[List[CKQuerySortBy]] = None
 
 
-class CKDesiredKey(str, Enum):
-    """
-    Enum for common desired keys in CloudKit queries.
-    """
-
-    TITLE_ENCRYPTED = "TitleEncrypted"
-    SNIPPET_ENCRYPTED = "SnippetEncrypted"
-    FIRST_ATTACHMENT_UTI_ENCRYPTED = "FirstAttachmentUTIEncrypted"
-    FIRST_ATTACHMENT_THUMBNAIL = "FirstAttachmentThumbnail"
-    FIRST_ATTACHMENT_THUMBNAIL_ORIENTATION = "FirstAttachmentThumbnailOrientation"
-    MODIFICATION_DATE = "ModificationDate"
-    DELETED = "Deleted"
-    FOLDERS = "Folders"
-    FOLDER = "Folder"
-    ATTACHMENTS = "Attachments"
-    PARENT_FOLDER = "ParentFolder"
-    NOTE = "Note"
-    LAST_VIEWED_MODIFICATION_DATE = "LastViewedModificationDate"
-    MINIMUM_SUPPORTED_NOTES_VERSION = "MinimumSupportedNotesVersion"
-    IS_PINNED = "IsPinned"
-
-
 # Request side (only what you actually send on the wire)
 class CKZoneIDReq(CKModel):
     zoneName: str
@@ -725,9 +697,7 @@ class CKQueryRequest(CKModel):
 
     query: CKQueryObject
     zoneID: CKZoneIDReq
-    desiredKeys: Optional[List[Union[CKDesiredKey, str]]] = (
-        None  # can include duplicates; keep order
-    )
+    desiredKeys: Optional[List[str]] = None  # can include duplicates; keep order
     resultsLimit: Optional[int] = None
     # Observed as a base64-like string on the wire; keep as str for strictness
     continuationMarker: Optional[str] = None
@@ -801,7 +771,7 @@ class CKZoneChangesZoneReq(CKModel):
     """
 
     zoneID: CKZoneID  # allow ownerRecordName/zoneType when present
-    desiredKeys: Optional[List[Union[CKDesiredKey, str]]] = None
+    desiredKeys: Optional[List[str]] = None
     desiredRecordTypes: Optional[List[str]] = None
     # Observed as a base64-like string on the wire; keep as str for strictness
     syncToken: Optional[str] = None
