@@ -440,7 +440,7 @@ class CKFields(dict[str, CKFieldOpen]):
 
 class CKRecord(CKModel):
     """
-    A CloudKit record as returned in /records/query for Notes.
+    A CloudKit record as returned in /records/query (or other endpoints).
 
     The 'fields' map contains app-level fields by **PascalCase** names
     (e.g., TitleEncrypted, ModificationDate, Deleted, Folder, Folders, ...),
@@ -763,7 +763,7 @@ class CKZoneChangesZoneReq(CKModel):
     One zone request entry for /changes/zone.
 
     Observed keys in corpus:
-      - zoneID: includes zoneName (always "Notes" here), sometimes zoneType and ownerRecordName (for shared)
+      - zoneID: includes zoneName (e.g., "Notes" or "Reminders"), sometimes zoneType and ownerRecordName (for shared)
       - desiredKeys: list of field names to project (duplicates allowed, order preserved)
       - desiredRecordTypes: list of record types to include
       - syncToken: optional paging token (base64-like string)
