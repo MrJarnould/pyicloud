@@ -685,7 +685,9 @@ class CKQueryObject(CKModel):
 
 # Request side (only what you actually send on the wire)
 class CKZoneIDReq(CKModel):
-    zoneName: Literal["Notes"]
+    zoneName: str
+    ownerRecordName: Optional[str] = None
+    zoneType: Optional[str] = None
 
 
 class CKQueryRequest(CKModel):
