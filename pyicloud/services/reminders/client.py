@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 from pydantic import ValidationError
 
-from .models.cloudkit import (
+from pyicloud.common.cloudkit import (
     CKQueryObject,
     CKQueryRequest,
     CKQueryResponse,

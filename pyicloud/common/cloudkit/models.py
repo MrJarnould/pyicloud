@@ -713,7 +713,9 @@ class CKDesiredKey(str, Enum):
 
 # Request side (only what you actually send on the wire)
 class CKZoneIDReq(CKModel):
-    zoneName: Literal["Notes"]
+    zoneName: str
+    zoneType: Optional[str] = None
+    ownerRecordName: Optional[str] = None
 
 
 class CKQueryRequest(CKModel):

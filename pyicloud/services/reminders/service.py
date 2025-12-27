@@ -9,14 +9,14 @@ import gzip
 import logging
 from typing import Any, Dict, Iterable, Optional
 
+from pyicloud.common.cloudkit import (
+    CKRecord,
+    CKZoneIDReq,
+)
 from pyicloud.services.base import BaseService
 
 from .client import CloudKitRemindersClient
 from .models import Reminder, RemindersList
-from .models.cloudkit import (
-    CKRecord,
-    CKZoneIDReq,
-)
 from .protobuf import reminders_pb2
 
 LOGGER = logging.getLogger(__name__)

@@ -20,7 +20,18 @@ from __future__ import annotations
 import logging
 from typing import Dict, Iterable, Iterator, List, Optional
 
-from pyicloud.common.cloudkit import (
+from pyicloud.services.base import BaseService
+from pyicloud.services.notes.decoding import BodyDecoder
+
+from .client import (
+    CloudKitNotesClient,
+    NotesApiError,
+    NotesAuthError,
+    NotesRateLimited,
+)
+from .domain import AttachmentId, NoteBody
+from .models import Attachment, Note, NoteSummary
+from .models.cloudkit import (
     CKDesiredKey,
     CKErrorItem,
     CKFVString,
@@ -36,17 +47,6 @@ from pyicloud.common.cloudkit import (
     CKZoneID,
     CKZoneIDReq,
 )
-from pyicloud.services.base import BaseService
-from pyicloud.services.notes.decoding import BodyDecoder
-
-from .client import (
-    CloudKitNotesClient,
-    NotesApiError,
-    NotesAuthError,
-    NotesRateLimited,
-)
-from .domain import AttachmentId, NoteBody
-from .models import Attachment, Note, NoteSummary
 from .models.dto import ChangeEvent, NoteFolder
 
 LOGGER = logging.getLogger(__name__)
