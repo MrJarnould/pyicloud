@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, Iterable, Iterator, List, Optional
+from typing import Dict, Iterable, Iterator, List, Optional, TypeVar
 
 from pydantic import ValidationError
 
@@ -29,9 +29,12 @@ from pyicloud.common.cloudkit import (
     CKZoneChangesZone,
     CKZoneChangesZoneReq,
     CKZoneIDReq,
+    CloudKitExtraMode,
+    resolve_cloudkit_validation_extra,
 )
 
 LOGGER = logging.getLogger(__name__)
+_ResponseModelT = TypeVar("_ResponseModelT")
 
 
 # ------------------------------- Errors --------------------------------------
@@ -206,9 +209,25 @@ class CloudKitNotesClient:
       - /changes/zone
     """
 
-    def __init__(self, base_url: str, session, base_params: Dict[str, object]):
+    def __init__(
+        self,
+        base_url: str,
+        session,
+        base_params: Dict[str, object],
+        *,
+        validation_extra: CloudKitExtraMode | None = None,
+    ):
         self._http = _CloudKitClient(base_url, session, base_params)
+        self._validation_extra = validation_extra
         LOGGER.info("CloudKitNotesClient initialized.")
+
+    def _validate_response(
+        self, model_cls: type[_ResponseModelT], data: Dict
+    ) -> _ResponseModelT:
+        return model_cls.model_validate(
+            data,
+            extra=resolve_cloudkit_validation_extra(self._validation_extra),
+        )
 
     # ----- Query -----
 
@@ -231,13 +250,13 @@ class CloudKitNotesClient:
         ).model_dump(exclude_none=True)
         data = self._http.post("/records/query", payload)
         try:
-            resp = CKQueryResponse.model_validate(data)
+            resp = self._validate_response(CKQueryResponse, data)
             LOGGER.info("Query returned %d records.", len(resp.records))
             return resp
         except ValidationError as e:
             self._log_validation("records.query", data, e)
             LOGGER.error("Query response validation failed.")
-            raise NotesApiError("Query response validation failed", payload=data)
+            raise NotesApiError("Query response validation failed", payload=data) from e
 
     # ----- Lookup -----
 
@@ -254,19 +273,20 @@ class CloudKitNotesClient:
                 CKLookupDescriptor(recordName=str(rn)) for rn in record_names_list
             ],
             zoneID=CKZoneIDReq(zoneName="Notes"),
+            desiredKeys=desired_keys,
         )
         payload = req.model_dump(exclude_none=True)
-        if desired_keys:
-            payload["desiredKeys"] = desired_keys
         data = self._http.post("/records/lookup", payload)
         try:
-            resp = CKLookupResponse.model_validate(data)
+            resp = self._validate_response(CKLookupResponse, data)
             LOGGER.info("Lookup returned %d records.", len(resp.records))
             return resp
         except ValidationError as e:
             self._log_validation("records.lookup", data, e)
             LOGGER.error("Lookup response validation failed.")
-            raise NotesApiError("Lookup response validation failed", payload=data)
+            raise NotesApiError(
+                "Lookup response validation failed", payload=data
+            ) from e
 
     # ----- Changes (paged generator) -----
 
@@ -283,11 +303,13 @@ class CloudKitNotesClient:
             LOGGER.debug("Fetching changes page %d", page_num)
             data = self._http.post("/changes/zone", payload)
             try:
-                envelope = CKZoneChangesResponse.model_validate(data)
+                envelope = self._validate_response(CKZoneChangesResponse, data)
             except ValidationError as e:
                 self._log_validation("changes.zone", data, e)
                 LOGGER.error("Changes response validation failed.")
-                raise NotesApiError("Changes response validation failed", payload=data)
+                raise NotesApiError(
+                    "Changes response validation failed", payload=data
+                ) from e
             zone = envelope.zones[0] if envelope.zones else None
             if not zone:
                 LOGGER.info("No more changes available.")
@@ -360,7 +382,7 @@ class CloudKitNotesClient:
         ).model_dump(exclude_none=True)
         try:
             data = self._http.post("/records/query", payload)
-            resp = CKQueryResponse.model_validate(data)
+            resp = self._validate_response(CKQueryResponse, data)
             if getattr(resp, "syncToken", None):
                 LOGGER.info("Successfully obtained sync token via query.")
                 return str(resp.syncToken)
@@ -384,7 +406,7 @@ class CloudKitNotesClient:
             ]
         )
         data = self._http.post("/changes/zone", req.model_dump(exclude_none=True))
-        env = CKZoneChangesResponse.model_validate(data)
+        env = self._validate_response(CKZoneChangesResponse, data)
         z = env.zones[0] if env.zones else None
         if z and getattr(z, "syncToken", None):
             LOGGER.info("Successfully obtained sync token via changes call.")

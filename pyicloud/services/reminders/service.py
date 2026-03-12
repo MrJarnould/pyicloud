@@ -1,151 +1,306 @@
-"""
-Reminders service (CloudKit-based).
-"""
+"""Reminders service (CloudKit-based)."""
 
 from __future__ import annotations
 
-import base64
-import gzip
 import logging
-from typing import Any, Dict, Iterable, Optional
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Union
 
-from pyicloud.common.cloudkit import (
-    CKRecord,
-    CKZoneIDReq,
-)
+from pyicloud.common.cloudkit import CKRecord
+from pyicloud.common.cloudkit.base import CloudKitExtraMode
 from pyicloud.services.base import BaseService
 
+from ._mappers import RemindersRecordMapper
+from ._protocol import (
+    _decode_crdt_document,
+    _encode_crdt_document,
+    _generate_resolution_token_map,
+)
+from ._reads import RemindersReadAPI
+from ._writes import RemindersWriteAPI
 from .client import CloudKitRemindersClient
-from .models import Reminder, RemindersList
-from .protobuf import reminders_pb2
+from .models import (
+    Alarm,
+    AlarmWithTrigger,
+    Hashtag,
+    ImageAttachment,
+    ListRemindersResult,
+    LocationTrigger,
+    Proximity,
+    RecurrenceFrequency,
+    RecurrenceRule,
+    Reminder,
+    ReminderChangeEvent,
+    RemindersList,
+    URLAttachment,
+)
 
 LOGGER = logging.getLogger(__name__)
 
+Attachment = Union[URLAttachment, ImageAttachment]
+
 
 class RemindersService(BaseService):
-    """
-    Reminders API via CloudKit.
-    """
+    """Reminders API via CloudKit."""
 
     _CONTAINER = "com.apple.reminders"
     _ENV = "production"
     _SCOPE = "private"
 
-    def __init__(self, service_root: str, session: object, params: Dict[str, Any]):
-        super().__init__(
-            str(service_root).replace(
-                "reminders.icloud.com", "ckdatabasews.icloud.com"
-            ),
-            session,
-            params,
+    def __init__(
+        self,
+        service_root: str,
+        session: Any,
+        params: Dict[str, Any],
+        *,
+        cloudkit_validation_extra: CloudKitExtraMode | None = None,
+    ):
+        super().__init__(service_root, session, params)
+        endpoint = (
+            f"{self.service_root}/database/1/"
+            f"{self._CONTAINER}/{self._ENV}/{self._SCOPE}"
         )
-        endpoint = f"{self.service_root}/database/1/{self._CONTAINER}/{self._ENV}/{self._SCOPE}"
         base_params = {
             "remapEnums": True,
-            "getCurrentSyncToken": True,
             **(params or {}),
         }
-        self._raw = CloudKitRemindersClient(endpoint, session, base_params)
-        self._lists: Dict[str, RemindersList] = {}
-        self._reminders: Dict[str, Reminder] = {}
-        self._populated = False
-
-    def populate(self):
-        """Fetch all lists and reminders."""
-        if self._populated:
-            return
-
-        zone_id = CKZoneIDReq(zoneName="Reminders", zoneType="REGULAR_CUSTOM_ZONE")
-        try:
-            response = self._raw.changes(zone_id=zone_id)
-        except Exception:
-            # Retry or handle error?
-            raise
-
-        if not response.zones:
-            return
-
-        # Assuming first zone is our target
-        zone_data = response.zones[0]
-
-        for rec in zone_data.records:
-            # Skip tombstone/error for now
-            if not isinstance(rec, CKRecord):
-                continue
-
-            if rec.recordType == "List":
-                # Decode List
-                title = rec.fields.get_value("Title")
-                color = None
-                self._lists[rec.recordName] = RemindersList(
-                    id=rec.recordName,
-                    title=str(title) if title else "Untitled",
-                    color=str(color) if color else None,
-                )
-            elif rec.recordType == "Reminder":
-                # Decode Reminder
-                self._reminders[rec.recordName] = self._record_to_reminder(rec)
-
-        self._populated = True
-
-    def lists(self) -> Iterable[RemindersList]:
-        """Fetch reminders lists."""
-        self.populate()
-        return self._lists.values()
-
-    def reminders(self, list_id: Optional[str] = None) -> Iterable[Reminder]:
-        """Fetch reminders, optionally filtered by list."""
-        self.populate()
-        if list_id:
-            return [r for r in self._reminders.values() if r.list_id == list_id]
-        return self._reminders.values()
-
-    def _record_to_reminder(self, rec: CKRecord) -> Reminder:
-        fields = rec.fields
-
-        # Title decoding
-        title_doc = fields.get_value("TitleDocument")
-        title = "Untitled"
-        if title_doc:
-            try:
-                title = self._decode_title_document(title_doc)
-            except Exception as e:
-                LOGGER.warning(
-                    "Failed to decode TitleDocument for %s: %s", rec.recordName, e
-                )
-                title = "Error Decoding Title"
-
-        # List ID
-        list_ref = fields.get_field("List")
-        list_id = ""
-        if list_ref and list_ref.value and hasattr(list_ref.value, "recordName"):
-            list_id = list_ref.value.recordName
-
-        # Due Date
-        due = fields.get_value("DueDate")
-
-        return Reminder(
-            id=rec.recordName,
-            title=title,
-            desc=None,  # Description might be in another field
-            due=due,
-            completed=bool(fields.get_value("Completed") or 0),
-            priority=int(fields.get_value("Priority") or 0),
-            list_id=list_id,
+        self._raw = CloudKitRemindersClient(
+            endpoint,
+            session,
+            base_params,
+            validation_extra=cloudkit_validation_extra,
         )
 
-    def _decode_title_document(self, encrypted_value: str) -> str:
-        data = base64.b64decode(encrypted_value)
-        try:
-            data = gzip.decompress(data)
-        except gzip.BadGzipFile:
-            pass  # Maybe not gzipped? But verification showed it was.
+        def get_raw() -> CloudKitRemindersClient:
+            return self._raw
 
-        doc = reminders_pb2.TitleDocument()
-        doc.ParseFromString(data)
+        self._mapper = RemindersRecordMapper(get_raw, LOGGER)
+        self._reads = RemindersReadAPI(get_raw, self._mapper, LOGGER)
+        self._writes = RemindersWriteAPI(get_raw, self._mapper, LOGGER)
 
-        # Navigate: TitleDocument -> Title (2) -> TitleContent (3) -> text (2)
-        if doc.title and doc.title.content and doc.title.content.text:
-            return doc.title.content.text
+    def lists(self) -> Iterable[RemindersList]:
+        return self._reads.lists()
 
-        return ""
+    def reminders(
+        self,
+        list_id: Optional[str] = None,
+    ) -> Iterable[Reminder]:
+        reminder_map: Dict[str, Reminder] = {}
+
+        list_ids: List[str]
+        if list_id:
+            list_ids = [list_id]
+        else:
+            list_ids = [lst.id for lst in self.lists()]
+
+        for lid in list_ids:
+            batch = self.list_reminders(
+                list_id=lid,
+                include_completed=True,
+                results_limit=200,
+            )
+            for reminder in batch.reminders:
+                reminder_map[reminder.id] = reminder
+
+        for reminder in reminder_map.values():
+            yield reminder
+
+    def sync_cursor(self) -> str:
+        return self._reads.sync_cursor()
+
+    def iter_changes(
+        self,
+        *,
+        since: Optional[str] = None,
+    ) -> Iterable[ReminderChangeEvent]:
+        return self._reads.iter_changes(since=since)
+
+    def get(self, reminder_id: str) -> Reminder:
+        return self._reads.get(reminder_id)
+
+    def create(
+        self,
+        list_id: str,
+        title: str,
+        desc: str = "",
+        completed: bool = False,
+        due_date: Optional[datetime] = None,
+        priority: int = 0,
+        flagged: bool = False,
+        all_day: bool = False,
+        time_zone: Optional[str] = None,
+    ) -> Reminder:
+        return self._writes.create(
+            list_id=list_id,
+            title=title,
+            desc=desc,
+            completed=completed,
+            due_date=due_date,
+            priority=priority,
+            flagged=flagged,
+            all_day=all_day,
+            time_zone=time_zone,
+        )
+
+    def update(self, reminder: Reminder) -> None:
+        self._writes.update(reminder)
+
+    def delete(self, reminder: Reminder) -> None:
+        self._writes.delete(reminder)
+
+    def add_location_trigger(
+        self,
+        reminder: Reminder,
+        title: str = "",
+        address: str = "",
+        latitude: float = 0.0,
+        longitude: float = 0.0,
+        radius: float = 100.0,
+        proximity: Proximity = Proximity.ARRIVING,
+    ) -> tuple[Alarm, LocationTrigger]:
+        return self._writes.add_location_trigger(
+            reminder=reminder,
+            title=title,
+            address=address,
+            latitude=latitude,
+            longitude=longitude,
+            radius=radius,
+            proximity=proximity,
+        )
+
+    def create_hashtag(self, reminder: Reminder, name: str) -> Hashtag:
+        return self._writes.create_hashtag(reminder, name)
+
+    def update_hashtag(self, hashtag: Hashtag, name: str) -> None:
+        self._writes.update_hashtag(hashtag, name)
+
+    def delete_hashtag(self, reminder: Reminder, hashtag: Hashtag) -> None:
+        self._writes.delete_hashtag(reminder, hashtag)
+
+    def create_url_attachment(
+        self,
+        reminder: Reminder,
+        url: str,
+        uti: str = "public.url",
+    ) -> URLAttachment:
+        return self._writes.create_url_attachment(reminder, url, uti)
+
+    def update_attachment(
+        self,
+        attachment: Attachment,
+        *,
+        url: Optional[str] = None,
+        uti: Optional[str] = None,
+        filename: Optional[str] = None,
+        file_size: Optional[int] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ) -> None:
+        self._writes.update_attachment(
+            attachment,
+            url=url,
+            uti=uti,
+            filename=filename,
+            file_size=file_size,
+            width=width,
+            height=height,
+        )
+
+    def delete_attachment(self, reminder: Reminder, attachment: Attachment) -> None:
+        self._writes.delete_attachment(reminder, attachment)
+
+    def create_recurrence_rule(
+        self,
+        reminder: Reminder,
+        *,
+        frequency: RecurrenceFrequency = RecurrenceFrequency.DAILY,
+        interval: int = 1,
+        occurrence_count: int = 0,
+        first_day_of_week: int = 0,
+    ) -> RecurrenceRule:
+        return self._writes.create_recurrence_rule(
+            reminder,
+            frequency=frequency,
+            interval=interval,
+            occurrence_count=occurrence_count,
+            first_day_of_week=first_day_of_week,
+        )
+
+    def update_recurrence_rule(
+        self,
+        recurrence_rule: RecurrenceRule,
+        *,
+        frequency: Optional[RecurrenceFrequency] = None,
+        interval: Optional[int] = None,
+        occurrence_count: Optional[int] = None,
+        first_day_of_week: Optional[int] = None,
+    ) -> None:
+        self._writes.update_recurrence_rule(
+            recurrence_rule,
+            frequency=frequency,
+            interval=interval,
+            occurrence_count=occurrence_count,
+            first_day_of_week=first_day_of_week,
+        )
+
+    def delete_recurrence_rule(
+        self,
+        reminder: Reminder,
+        recurrence_rule: RecurrenceRule,
+    ) -> None:
+        self._writes.delete_recurrence_rule(reminder, recurrence_rule)
+
+    def list_reminders(
+        self,
+        list_id: str,
+        include_completed: bool = False,
+        results_limit: int = 200,
+    ) -> ListRemindersResult:
+        return self._reads.list_reminders(
+            list_id=list_id,
+            include_completed=include_completed,
+            results_limit=results_limit,
+        )
+
+    def alarms_for(self, reminder: Reminder) -> List[AlarmWithTrigger]:
+        return self._reads.alarms_for(reminder)
+
+    def tags_for(self, reminder: Reminder) -> List[Hashtag]:
+        return self._reads.tags_for(reminder)
+
+    def attachments_for(self, reminder: Reminder) -> List[Attachment]:
+        return self._reads.attachments_for(reminder)
+
+    def recurrence_rules_for(self, reminder: Reminder) -> List[RecurrenceRule]:
+        return self._reads.recurrence_rules_for(reminder)
+
+    # Compatibility wrappers for the service's tested helper surface.
+    def _decode_crdt_document(self, encrypted_value: str | bytes) -> str:
+        return _decode_crdt_document(encrypted_value)
+
+    def _encode_crdt_document(self, text: str) -> str:
+        return _encode_crdt_document(text)
+
+    def _generate_resolution_token_map(self, fields_modified: list[str]) -> str:
+        return _generate_resolution_token_map(fields_modified)
+
+    def _record_to_list(self, rec: CKRecord) -> RemindersList:
+        return self._mapper.record_to_list(rec)
+
+    def _record_to_reminder(self, rec: CKRecord) -> Reminder:
+        return self._mapper.record_to_reminder(rec)
+
+    def _record_to_alarm(self, rec: CKRecord) -> Alarm:
+        return self._mapper.record_to_alarm(rec)
+
+    def _record_to_alarm_trigger(self, rec: CKRecord) -> Optional[LocationTrigger]:
+        return self._mapper.record_to_alarm_trigger(rec)
+
+    def _record_to_attachment(self, rec: CKRecord) -> Optional[Attachment]:
+        return self._mapper.record_to_attachment(rec)
+
+    def _record_to_hashtag(self, rec: CKRecord) -> Hashtag:
+        return self._mapper.record_to_hashtag(rec)
+
+    def _record_to_recurrence_rule(self, rec: CKRecord) -> RecurrenceRule:
+        return self._mapper.record_to_recurrence_rule(rec)

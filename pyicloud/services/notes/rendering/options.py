@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExportConfig:
     # Logging/debug
     debug: bool = False

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterator, List, Optional
+from typing import TYPE_CHECKING, Iterator, List, Literal, Optional
+
+from pydantic import computed_field
+
+from pyicloud.common.models import FrozenServiceModel
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
     from ..service import NotesService
 
 
-@dataclass(frozen=True)
-class NoteSummary:
+class NoteSummary(FrozenServiceModel):
     """Lightweight metadata returned by list/search APIs."""
 
     id: str
@@ -24,8 +26,7 @@ class NoteSummary:
     is_locked: bool
 
 
-@dataclass(frozen=True)
-class Attachment:
+class Attachment(FrozenServiceModel):
     """Metadata for a note attachment."""
 
     id: str
@@ -49,14 +50,14 @@ class Attachment:
         yield from service._stream_attachment(self, chunk_size=chunk_size)
 
 
-@dataclass(frozen=True)
 class Note(NoteSummary):
     """Full note payload returned by ``NotesService.get``."""
 
     text: Optional[str]
-    html: Optional[str]
+    html: Optional[str] = None
     attachments: Optional[List[Attachment]]
 
+    @computed_field
     @property
     def has_attachments(self) -> Optional[bool]:
         """Return ``True``/``False`` when attachments were loaded, otherwise ``None``."""
@@ -65,15 +66,13 @@ class Note(NoteSummary):
         return bool(self.attachments)
 
 
-@dataclass(frozen=True)
-class NoteFolder:
+class NoteFolder(FrozenServiceModel):
     id: str
     name: Optional[str]
     has_subfolders: Optional[bool]
     count: Optional[int]  # not always available
 
 
-@dataclass(frozen=True)
-class ChangeEvent:
-    type: str  # "updated" | "deleted"
+class ChangeEvent(FrozenServiceModel):
+    type: Literal["updated", "deleted"]
     note: NoteSummary

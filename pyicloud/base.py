@@ -23,6 +23,7 @@ from fido2.webauthn import (
 from requests import HTTPError
 from requests.models import Response
 
+from pyicloud.common.cloudkit.base import CloudKitExtraMode
 from pyicloud.const import ACCOUNT_NAME, CONTENT_TYPE_JSON, CONTENT_TYPE_TEXT
 from pyicloud.exceptions import (
     PyiCloud2FARequiredException,
@@ -143,6 +144,8 @@ class PyiCloudService:
         with_family: bool = True,
         china_mainland: bool = False,
         accept_terms: bool = False,
+        *,
+        cloudkit_validation_extra: Optional[CloudKitExtraMode] = None,
     ) -> None:
         self._is_china_mainland: bool = (
             china_mainland or environ.get("icloud_china", "0") == "1"
@@ -163,6 +166,7 @@ class PyiCloudService:
         self.params: dict[str, Any] = {}
         self._client_id: str = client_id or str(uuid1()).lower()
         self._with_family: bool = with_family
+        self._cloudkit_validation_extra = cloudkit_validation_extra
 
         _cookie_directory: str = self._setup_cookie_directory(cookie_directory)
         _headers: dict[str, str] = _HEADERS.copy()
@@ -929,10 +933,13 @@ class PyiCloudService:
     def reminders(self) -> RemindersService:
         """Gets the 'Reminders' service."""
         if not self._reminders:
-            service_root: str = self.get_webservice_url("reminders")
+            service_root: str = self.get_webservice_url("ckdatabasews")
             try:
                 self._reminders = RemindersService(
-                    service_root=service_root, session=self.session, params=self.params
+                    service_root=service_root,
+                    session=self.session,
+                    params=self.params,
+                    cloudkit_validation_extra=self._cloudkit_validation_extra,
                 )
             except (PyiCloudAPIResponseException,) as error:
                 raise PyiCloudServiceUnavailable(
@@ -969,6 +976,7 @@ class PyiCloudService:
                     service_root=service_root,
                     session=self.session,
                     params=self.params,
+                    cloudkit_validation_extra=self._cloudkit_validation_extra,
                 )
             except (PyiCloudAPIResponseException,) as error:
                 raise PyiCloudServiceUnavailable(

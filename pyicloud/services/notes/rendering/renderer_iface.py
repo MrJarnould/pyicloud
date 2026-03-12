@@ -28,7 +28,7 @@ class NoteDataSource(Protocol):
     def get_mergeable_gz(self, identifier: str) -> Optional[bytes]: ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AttachmentRef:
     """Lightweight reference created while walking AttributeRuns."""
 

@@ -1,18 +1,18 @@
-# pyicloud/services/notes_domain.py
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import List, Optional
 
+from pydantic import Field
 
-@dataclass(frozen=True)
-class AttachmentId:
+from pyicloud.common.models import FrozenServiceModel
+
+
+class AttachmentId(FrozenServiceModel):
     identifier: str
     type_uti: Optional[str] = None
 
 
-@dataclass(frozen=True)
-class NoteBody:
+class NoteBody(FrozenServiceModel):
     bytes: bytes
     text: Optional[str]
-    attachment_ids: List[AttachmentId]
+    attachment_ids: List[AttachmentId] = Field(default_factory=list)

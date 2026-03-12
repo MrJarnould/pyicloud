@@ -1,13 +1,18 @@
 """Shared CloudKit models and utilities."""
 
-from .base import CKModel
+from .base import CKModel, CloudKitExtraMode, resolve_cloudkit_validation_extra
 from .models import (
     CKErrorItem,
     CKFieldOpen,
+    CKFVInt64,
+    CKFVReference,
     CKFVString,
     CKLookupDescriptor,
     CKLookupRequest,
     CKLookupResponse,
+    CKModifyOperation,
+    CKModifyRequest,
+    CKModifyResponse,
     CKQueryFilterBy,
     CKQueryObject,
     CKQueryRequest,
@@ -16,6 +21,9 @@ from .models import (
     CKRecord,
     CKReference,
     CKTombstoneRecord,
+    CKWriteFields,
+    CKWriteParent,
+    CKWriteRecord,
     CKZoneChangesRequest,
     CKZoneChangesResponse,
     CKZoneChangesZone,
@@ -27,12 +35,18 @@ from .models import (
 
 __all__ = [
     "CKModel",
+    "CloudKitExtraMode",
     "CKErrorItem",
     "CKFieldOpen",
+    "CKFVInt64",
+    "CKFVReference",
     "CKFVString",
     "CKLookupDescriptor",
     "CKLookupRequest",
     "CKLookupResponse",
+    "CKModifyOperation",
+    "CKModifyRequest",
+    "CKModifyResponse",
     "CKQueryFilterBy",
     "CKQueryObject",
     "CKQueryRequest",
@@ -41,6 +55,9 @@ __all__ = [
     "CKRecord",
     "CKReference",
     "CKTombstoneRecord",
+    "CKWriteFields",
+    "CKWriteParent",
+    "CKWriteRecord",
     "CKZoneChangesRequest",
     "CKZoneChangesResponse",
     "CKZoneChangesZone",
@@ -48,4 +65,5 @@ __all__ = [
     "CKZoneID",
     "CKZoneIDReq",
     "KnownCKField",
+    "resolve_cloudkit_validation_extra",
 ]

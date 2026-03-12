@@ -52,7 +52,13 @@ def _from_millis_or_none(v):
     # Coerce sentinels and anything older than canonical MIN to None
     if iv in SENTINEL_ZERO_MS or iv <= CANONICAL_MIN_MS:
         return None
-    return datetime.fromtimestamp(iv / 1000.0, tz=timezone.utc)
+    try:
+        return datetime.fromtimestamp(iv / 1000.0, tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        # Some Reminders records contain out-of-range TIMESTAMP values
+        # (e.g. malformed/legacy DueDate). Treat these as unset so one bad
+        # record does not fail the entire page.
+        return None
 
 
 def _to_millis(dt: datetime) -> int:
@@ -156,7 +162,7 @@ class CKChainProtectionInfo(CKModel):
 
 
 # ---------------------------------------------------------------------------
-# Share-surface models (coarse first)
+# Share-surface models
 # ---------------------------------------------------------------------------
 
 
@@ -170,6 +176,45 @@ class CKShare(CKModel):
 
     recordName: Optional[str] = None
     zoneID: Optional[CKZoneID] = None
+
+
+class CKNameComponents(CKModel):
+    givenName: Optional[str] = None
+    familyName: Optional[str] = None
+
+
+class CKLookupInfo(CKModel):
+    emailAddress: Optional[str] = None
+    phoneNumber: Optional[str] = None
+
+
+class CKUserIdentity(CKModel):
+    userRecordName: Optional[str] = None
+    nameComponents: Optional[CKNameComponents] = None
+    lookupInfo: Optional[CKLookupInfo] = None
+
+
+class CKParticipantProtectionInfo(CKChainProtectionInfo):
+    """Participant-scoped protectionInfo envelope."""
+
+
+class CKParticipant(CKModel):
+    participantId: Optional[str] = None
+    userIdentity: Optional[CKUserIdentity] = None
+    type: Optional[str] = None
+    acceptanceStatus: Optional[str] = None
+    permission: Optional[str] = None
+    customRole: Optional[str] = None
+    isApprovedRequester: Optional[bool] = None
+    orgUser: Optional[bool] = None
+    publicKeyVersion: Optional[int] = None
+    outOfNetworkPrivateKey: Optional[str] = None
+    outOfNetworkKeyType: Optional[int] = None
+    protectionInfo: Optional[CKParticipantProtectionInfo] = None
+
+
+class CKPCSInfo(CKChainProtectionInfo):
+    """Top-level PCS envelope used by shared-record metadata."""
 
 
 class CKReference(CKModel):
@@ -189,7 +234,8 @@ class CKReference(CKModel):
 
 class _CKFieldBase(CKModel):
     # Every field wrapper has a 'type' discriminator and a 'value'
-    type: str
+    # Subclasses declare type: Literal[...] for the discriminator.
+    pass
 
 
 class CKTimestampField(_CKFieldBase):
@@ -227,6 +273,11 @@ class CKStringField(_CKFieldBase):
     isEncrypted: Optional[bool] = None  # seen on some STRING wrappers (lookup)
 
 
+class CKStringListField(_CKFieldBase):
+    type: Literal["STRING_LIST"]
+    value: List[str]
+
+
 # Asset thumbnails / tokens (e.g. FirstAttachmentThumbnail)
 class CKAssetToken(CKModel):
     # Keep as str to preserve exact wire representation.
@@ -234,6 +285,7 @@ class CKAssetToken(CKModel):
     referenceChecksum: Optional[str] = None
     wrappingKey: Optional[str] = None
     downloadURL: Optional[str] = None
+    downloadedData: Optional[Base64Bytes] = None
     size: Optional[int] = None
 
 
@@ -251,6 +303,8 @@ class CKAssetField(_CKFieldBase):
 class CKDoubleField(_CKFieldBase):
     type: Literal["DOUBLE"]
     value: float
+    # AlarmTrigger latitude/longitude in Reminders can be encrypted doubles.
+    isEncrypted: Optional[bool] = None
 
 
 class CKBytesField(_CKFieldBase):
@@ -295,6 +349,7 @@ KNOWN_TAGS: frozenset[str] = frozenset(
         "REFERENCE",
         "REFERENCE_LIST",
         "STRING",
+        "STRING_LIST",
         "ASSETID",
         "ASSET",
         "DOUBLE",
@@ -318,6 +373,7 @@ KnownCKField = Annotated[
         CKReferenceField,
         CKReferenceListField,
         CKStringField,
+        CKStringListField,
         CKAssetIDField,
         CKAssetField,
         CKDoubleField,
@@ -329,6 +385,24 @@ KnownCKField = Annotated[
     ],
     Field(discriminator="type"),
 ]
+
+_KNOWN_CK_FIELD_MODELS: dict[str, type[_CKFieldBase]] = {
+    "TIMESTAMP": CKTimestampField,
+    "INT64": CKInt64Field,
+    "ENCRYPTED_BYTES": CKEncryptedBytesField,
+    "REFERENCE": CKReferenceField,
+    "REFERENCE_LIST": CKReferenceListField,
+    "STRING": CKStringField,
+    "STRING_LIST": CKStringListField,
+    "ASSETID": CKAssetIDField,
+    "ASSET": CKAssetField,
+    "DOUBLE": CKDoubleField,
+    "BYTES": CKBytesField,
+    "DOUBLE_LIST": CKDoubleListField,
+    "INT64_LIST": CKInt64ListField,
+    "ASSETID_LIST": CKAssetIDListField,
+    "UNKNOWN_LIST": CKUnknownListField,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -378,21 +452,23 @@ class CKFieldOpen(RootModel[Union[KnownCKField, CKPassthroughField]]):
         """
         t = obj.get("type") if isinstance(obj, dict) else None
 
-        # Known wrappers: coerce to the exact discriminated member instance
-        if t in KNOWN_TAGS:
-            return TypeAdapter(KnownCKField).validate_python(obj)
-
-        # Already an instance of one of our wrapper models -> keep as-is
-        # (covers CKEncryptedBytesField, CKTimestampField, CKPassthroughField, etc.)
+        # Already an instance of one of our wrapper models -> keep as-is.
         if isinstance(obj, _CKFieldBase):
             return obj
 
+        # Known wrappers: coerce to the exact discriminated member instance
+        if isinstance(obj, dict) and t in KNOWN_TAGS:
+            return _KNOWN_CK_FIELD_MODELS[t].model_validate(obj)
+
         # Explicit but unknown wrapper -> passthrough instance
         if isinstance(obj, dict) and "type" in obj and "value" in obj:
-            return CKPassthroughField(**obj)
+            return CKPassthroughField.model_validate(obj)
 
         # Fallback: wrap whatever came in as passthrough
         return CKPassthroughField(type=str(t) if t else "UNKNOWN", value=obj)
+
+
+_CK_FIELD_OPEN_ADAPTER = TypeAdapter(CKFieldOpen)
 
 
 # Insert CKFields class here (after CKFieldOpen, before record/response section)
@@ -433,6 +509,17 @@ class CKFields(dict[str, CKFieldOpen]):
         return None if f is None else getattr(f, "value", None)
 
 
+def _coerce_field_mapping(v, mapping_cls):
+    """Validate a raw field mapping into the requested CK field container."""
+    if isinstance(v, mapping_cls):
+        return v
+    if isinstance(v, dict):
+        return mapping_cls(
+            {k: _CK_FIELD_OPEN_ADAPTER.validate_python(val) for k, val in v.items()}
+        )
+    return v
+
+
 # ---------------------------------------------------------------------------
 # Record and response
 # ---------------------------------------------------------------------------
@@ -460,39 +547,35 @@ class CKRecord(CKModel):
         Ensure the mapping is validated item-by-item to CKFieldOpen
         and wrapped in CKFields to enable attribute access DX.
         """
-        if isinstance(v, CKFields):
-            return v
-        if isinstance(v, dict):
-            adapter = TypeAdapter(CKFieldOpen)
-            return CKFields({k: adapter.validate_python(val) for k, val in v.items()})
-        return v
+        return _coerce_field_mapping(v, CKFields)
 
-    @field_validator("fields")
-    @classmethod
-    def _validate_encrypted_bytes(cls, v: CKFields) -> CKFields:
-        """Enforce a strict invariant: any field ending with 'Encrypted' must be
-        represented as ENCRYPTED_BYTES. This guarantees downstream code can
-        assume a single decoding path (bytes) for encrypted payloads.
+    @model_validator(mode="after")
+    def _validate_encrypted_fields(self):
+        """Validate encrypted-field wrappers against observed CloudKit shapes.
 
-        If a server variant ever sends a different wrapper (e.g., STRING), this
-        validator will fail fast with a clear error during model validation.
+        Most `*Encrypted` fields use ENCRYPTED_BYTES, but shared CloudKit
+        records can legitimately carry STRING wrappers with `isEncrypted=true`.
         """
-        try:
-            for key, wrapper in v.items():
-                if not isinstance(key, str) or not key.endswith("Encrypted"):
-                    continue
-                # CKFieldOpen unwrap -> typed wrapper (e.g., CKEncryptedBytesField)
-                inner = wrapper.unwrap() if hasattr(wrapper, "unwrap") else wrapper
-                tag = getattr(inner, "type", None)
-                if tag != "ENCRYPTED_BYTES":
-                    # Keep the message explicit to aid debugging if the server flips shape
-                    raise TypeError(
-                        f"Field '{key}' must be ENCRYPTED_BYTES, got {tag!r}"
-                    )
-        except Exception as e:
-            # Re-raise to integrate with Pydantic's error surfacing
-            raise e
-        return v
+        for key, wrapper in self.fields.items():
+            if not isinstance(key, str) or not key.endswith("Encrypted"):
+                continue
+
+            inner = wrapper.unwrap() if hasattr(wrapper, "unwrap") else wrapper
+            tag = getattr(inner, "type", None)
+
+            if tag == "ENCRYPTED_BYTES":
+                continue
+
+            if tag == "STRING" and getattr(inner, "isEncrypted", False) is True:
+                continue
+
+            raise ValueError(
+                f"Field '{key}' on recordType {self.recordType!r} must be "
+                "ENCRYPTED_BYTES or STRING with isEncrypted=true, "
+                f"got {tag!r}"
+            )
+
+        return self
 
     # Often present, often empty object
     pluginFields: Dict[str, JsonValue] = Field(default_factory=dict)
@@ -511,17 +594,17 @@ class CKRecord(CKModel):
     stableUrl: Optional[CKStableUrl] = None
     shortGUID: Optional[str] = None
 
-    # Share-surface (top-level, coarse types)
+    # Share-surface (top-level shared metadata)
     share: Optional[CKShare] = None
     publicPermission: Optional[str] = None
-    participants: Optional[List[Dict[str, JsonValue]]] = None
-    requesters: Optional[List[Dict[str, JsonValue]]] = None
-    blocked: Optional[List[Dict[str, JsonValue]]] = None
+    participants: Optional[List[CKParticipant]] = None
+    requesters: Optional[List[CKParticipant]] = None
+    blocked: Optional[List[CKParticipant]] = None
     denyAccessRequests: Optional[bool] = None
-    owner: Optional[Dict[str, JsonValue]] = None
-    currentUserParticipant: Optional[Dict[str, JsonValue]] = None
-    invitedPCS: Optional[Dict[str, JsonValue]] = None
-    selfAddedPCS: Optional[Dict[str, JsonValue]] = None
+    owner: Optional[CKParticipant] = None
+    currentUserParticipant: Optional[CKParticipant] = None
+    invitedPCS: Optional[CKPCSInfo] = None
+    selfAddedPCS: Optional[CKPCSInfo] = None
     shortTokenHash: Optional[str] = None
 
     # End-to-end encryption metadata (optional)
@@ -533,13 +616,45 @@ class CKRecord(CKModel):
     expirationTime: Optional[SecsOrMillisDateTime] = None
 
 
+class CKWriteParent(CKModel):
+    """Write-side parent reference embedded under a record."""
+
+    recordName: str
+
+
+class CKWriteFields(CKFields):
+    """Write-side field mapping for modify requests."""
+
+
+class CKWriteRecord(CKModel):
+    """
+    CloudKit record shape used in modify requests.
+
+    Keep this narrower than CKRecord: only request-side fields that are
+    actually serialized on writes belong here.
+    """
+
+    recordName: str
+    recordType: str
+    fields: CKWriteFields = Field(default_factory=CKWriteFields)
+    pluginFields: Dict[str, JsonValue] = Field(default_factory=dict)
+    recordChangeTag: Optional[str] = None
+    parent: Optional[CKWriteParent] = None
+    zoneID: Optional[CKZoneID] = None
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _coerce_fields(cls, v):
+        return _coerce_field_mapping(v, CKWriteFields)
+
+
 # ---------------------------------------------------------------------------
 # Error items mixed into records[] on failure
 # ---------------------------------------------------------------------------
 class CKErrorItem(CKModel):
     """
     Error item possibly present inside `records[]` when a per-record operation fails.
-    Strict during modeling: unknown keys will raise (inherits extra="forbid").
+    Additional server-provided properties will be preserved via CKModel(extra="allow").
     """
 
     serverErrorCode: str
@@ -599,7 +714,7 @@ class CKComparator(str, Enum):
 
 # FieldValue typed wrappers (request side) — discriminated by 'type'
 class _CKFilterValueBase(CKModel):
-    type: str
+    pass  # Subclasses declare type: Literal[...] for the discriminator.
 
 
 class CKFVString(_CKFilterValueBase):
@@ -715,6 +830,7 @@ class CKLookupDescriptor(CKModel):
 class CKLookupRequest(CKModel):
     records: List[CKLookupDescriptor]
     zoneID: CKZoneIDReq
+    desiredKeys: Optional[List[str]] = None
 
 
 class CKLookupResponse(CKModel):
@@ -780,3 +896,35 @@ class CKZoneChangesZoneReq(CKModel):
 
 class CKZoneChangesRequest(CKModel):
     zones: List[CKZoneChangesZoneReq]
+    resultsLimit: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Request-side: /records/modify payloads
+# ---------------------------------------------------------------------------
+
+
+class CKModifyOperation(CKModel):
+    operationType: Literal[
+        "create",
+        "update",
+        "forceUpdate",
+        "replace",
+        "forceReplace",
+        "delete",
+        "forceDelete",
+    ]
+    record: CKWriteRecord
+
+
+class CKModifyRequest(CKModel):
+    operations: List[CKModifyOperation]
+    zoneID: CKZoneIDReq
+    atomic: Optional[bool] = None
+
+
+class CKModifyResponse(CKModel):
+    records: List[Union[CKRecord, CKTombstoneRecord, CKErrorItem]] = Field(
+        default_factory=list
+    )
+    syncToken: Optional[str] = None

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, List, Optional
 
-from tinyhtml import h, raw
+from tinyhtml import h, raw  # type: ignore[import-not-found]
 
 from ..protobuf import notes_pb2 as pb
 
@@ -29,7 +29,7 @@ class MapKey(str, Enum):
     CELL_COLUMNS = "cellColumns"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TableSpec:
     type_name: TypeName
     rows_key: MapKey
@@ -45,18 +45,18 @@ TABLE_SPEC = TableSpec(
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class Cell:
     html: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class AxisState:
     indices: dict[int, int] = field(default_factory=dict)
     total: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class TableBuilder:
     key_items: List[str]
     type_items: List[str]
@@ -106,7 +106,7 @@ class TableBuilder:
                 v_idx = self._uuid_index_from_entry(v_ent)
                 if v_idx is None:
                     continue
-                pos = axis.indices.get(k_idx, axis.indices.get(v_idx, 0))
+                pos = axis.indices.get(k_idx, axis.indices.get(v_idx, 0))  # type: ignore[arg-type]
                 axis.indices[v_idx] = pos
         except Exception:
             pass
@@ -128,7 +128,7 @@ class TableBuilder:
             try:
                 col_key_ent = self.entries[col.key.object_index]
                 col_pos = self.cols.indices.get(
-                    self._uuid_index_from_entry(col_key_ent)
+                    self._uuid_index_from_entry(col_key_ent)  # type: ignore[arg-type]
                 )
                 if col_pos is None:
                     continue
@@ -139,7 +139,7 @@ class TableBuilder:
                 try:
                     row_key_ent = self.entries[row.key.object_index]
                     row_pos = self.rows.indices.get(
-                        self._uuid_index_from_entry(row_key_ent)
+                        self._uuid_index_from_entry(row_key_ent)  # type: ignore[arg-type]
                     )
                     if row_pos is None:
                         continue
@@ -160,9 +160,9 @@ class TableBuilder:
             tds: List[object] = []
             for c in range(self.cols.total):
                 cell_html = self.cells[r][c].html or ""
-                tds.append(h("td")(raw(cell_html)))
-            trs.append(h("tr")(*tds))
-        return h("table")(*trs).render()
+                tds.append(h("td")(raw(cell_html)))  # type: ignore[arg-type]
+            trs.append(h("tr")(*tds))  # type: ignore[arg-type]
+        return h("table")(*trs).render()  # type: ignore[arg-type]
 
 
 ALLOWED_TABLE_TYPES = {

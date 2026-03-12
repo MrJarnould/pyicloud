@@ -15,14 +15,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from ..models.cloudkit import CKRecord
+from pyicloud.common.cloudkit import CKRecord
+
 from .options import ExportConfig
 from .renderer_iface import NoteDataSource
 
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class CloudKitNoteDataSource(NoteDataSource):
     _uti: Dict[str, str] = field(default_factory=dict)
     _mergeable_gz: Dict[str, bytes] = field(default_factory=dict)
@@ -59,7 +60,7 @@ class CloudKitNoteDataSource(NoteDataSource):
         fields = rec.fields
 
         # With strict model validation, *Encrypted fields are always bytes.
-        def _text_from_bytes(val: Optional[bytes]) -> Optional[str]:
+        def _text_from_bytes(val: Optional[bytes | bytearray]) -> Optional[str]:
             if val is None:
                 return None
             try:

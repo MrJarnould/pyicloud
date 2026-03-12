@@ -12,7 +12,7 @@ Public API:
   - NotesService.iter_changes(since=None, page_size=200) -> Iterable[ChangeEvent]
   - NotesService.raw -> CloudKitNotesClient (escape hatch)
 
-This module exposes developer-friendly dataclasses and hides CloudKit details.
+This module exposes developer-friendly typed models and hides CloudKit details.
 """
 
 from __future__ import annotations
@@ -34,7 +34,9 @@ from pyicloud.common.cloudkit import (
     CKZoneChangesZoneReq,
     CKZoneID,
     CKZoneIDReq,
+    CloudKitExtraMode,
 )
+from pyicloud.common.cloudkit.models import CKReferenceField, CKReferenceListField
 from pyicloud.services.base import BaseService
 from pyicloud.services.notes.decoding import BodyDecoder
 
@@ -46,7 +48,7 @@ from .client import (
 )
 from .domain import AttachmentId, NoteBody
 from .models import Attachment, Note, NoteSummary
-from .models.constants import NotesDesiredKey
+from .models.constants import NotesDesiredKey, NotesRecordType
 from .models.dto import ChangeEvent, NoteFolder
 
 LOGGER = logging.getLogger(__name__)
@@ -79,7 +81,14 @@ class NotesService(BaseService):
     _ENV = "production"
     _SCOPE = "private"
 
-    def __init__(self, service_root: str, session, params: Dict[str, str]):
+    def __init__(
+        self,
+        service_root: str,
+        session,
+        params: Dict[str, str],
+        *,
+        cloudkit_validation_extra: CloudKitExtraMode | None = None,
+    ):
         super().__init__(service_root=service_root, session=session, params=params)
         endpoint = f"{self.service_root}/database/1/{self._CONTAINER}/{self._ENV}/{self._SCOPE}"
         # Sensible defaults; lower-case booleans are applied in the raw client
@@ -92,6 +101,7 @@ class NotesService(BaseService):
             base_url=endpoint,
             session=session,
             base_params=base_params,
+            validation_extra=cloudkit_validation_extra,
         )
         # In-memory caches
         self._folder_name_cache: Dict[str, Optional[str]] = {}
@@ -194,7 +204,7 @@ class NotesService(BaseService):
         for zone in self._raw.changes(
             zone_req=CKZoneChangesZoneReq(
                 zoneID=CKZoneID(zoneName="Notes", zoneType="REGULAR_CUSTOM_ZONE"),
-                desiredRecordTypes=["Note"],
+                desiredRecordTypes=[NotesRecordType.Note],
                 desiredKeys=self._coerce_keys(
                     [
                         NotesDesiredKey.TITLE_ENCRYPTED,
@@ -220,8 +230,8 @@ class NotesService(BaseService):
         """
         desired_keys = [
             NotesDesiredKey.TITLE_ENCRYPTED,
-            "TitleModificationDate",
-            "HasSubfolder",
+            NotesDesiredKey.TITLE_MODIFICATION_DATE,
+            NotesDesiredKey.HAS_SUBFOLDER,
         ]
         query = CKQueryObject(
             recordType="SearchIndexes",
@@ -251,7 +261,9 @@ class NotesService(BaseService):
                     )
                     has_sub = bool(
                         getattr(
-                            rec.fields.get_field("HasSubfolder") or (), "value", False
+                            rec.fields.get_field(NotesDesiredKey.HAS_SUBFOLDER) or (),
+                            "value",
+                            False,
                         )
                     )
                     yield NoteFolder(
@@ -278,7 +290,7 @@ class NotesService(BaseService):
         for zone in self._raw.changes(
             zone_req=CKZoneChangesZoneReq(
                 zoneID=CKZoneID(zoneName="Notes", zoneType="REGULAR_CUSTOM_ZONE"),
-                desiredRecordTypes=["Note"],
+                desiredRecordTypes=[NotesRecordType.Note],
                 desiredKeys=self._coerce_keys(
                     [
                         NotesDesiredKey.TITLE_ENCRYPTED,
@@ -470,7 +482,7 @@ class NotesService(BaseService):
         for zone in self._raw.changes(
             zone_req=CKZoneChangesZoneReq(
                 zoneID=CKZoneID(zoneName="Notes", zoneType="REGULAR_CUSTOM_ZONE"),
-                desiredRecordTypes=["Note"],
+                desiredRecordTypes=[NotesRecordType.Note],
                 desiredKeys=self._coerce_keys(
                     [
                         NotesDesiredKey.TITLE_ENCRYPTED,
@@ -489,15 +501,18 @@ class NotesService(BaseService):
                 if isinstance(rec, CKRecord):
                     deleted_flag = bool(rec.fields.get_value("Deleted") or False)
                     evt_type = "deleted" if deleted_flag else "updated"
-                    yield ChangeEvent(evt_type, self._summary_from_record(rec))
+                    yield ChangeEvent(
+                        type=evt_type,
+                        note=self._summary_from_record(rec),
+                    )
                     continue
 
                 if isinstance(rec, CKTombstoneRecord):
                     record_name = getattr(rec, "recordName", None)
                     if record_name:
                         yield ChangeEvent(
-                            "deleted",
-                            NoteSummary(
+                            type="deleted",
+                            note=NoteSummary(
                                 id=record_name,
                                 title=None,
                                 snippet=None,
@@ -558,9 +573,11 @@ class NotesService(BaseService):
         return out
 
     @staticmethod
-    def _decode_encrypted(b: Optional[bytes]) -> Optional[str]:
+    def _decode_encrypted(b: Optional[bytes | str]) -> Optional[str]:
         if b is None:
             return None
+        if isinstance(b, str):
+            return b
         try:
             return b.decode("utf-8", "replace")
         except Exception:
@@ -568,15 +585,11 @@ class NotesService(BaseService):
 
     def _extract_folder_id(self, rec: CKRecord) -> Optional[str]:
         f = rec.fields.get_field("Folder")
-        if f and hasattr(f, "value") and getattr(f.value, "recordName", None):
+        if isinstance(f, CKReferenceField) and f.value:
             return f.value.recordName
         fl = rec.fields.get_field("Folders")
-        if fl and hasattr(fl, "value"):
-            vals = getattr(fl, "value", []) or []
-            if vals:
-                rn = getattr(vals[0], "recordName", None)
-                if rn:
-                    return rn
+        if isinstance(fl, CKReferenceListField) and fl.value:
+            return fl.value[0].recordName
         return None
 
     def _folder_name(self, folder_id: Optional[str]) -> Optional[str]:
@@ -611,7 +624,8 @@ class NotesService(BaseService):
         folder_id = self._extract_folder_id(rec)
         folder_name = self._folder_name(folder_id)
         is_locked = (
-            str(getattr(rec, "recordType", "")).lower() == "passwordprotectednote"
+            str(getattr(rec, "recordType", "")).lower()
+            == NotesRecordType.PasswordProtectedNote.lower()
         )
         return NoteSummary(
             id=rec.recordName,

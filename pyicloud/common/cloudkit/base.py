@@ -1,53 +1,57 @@
 from __future__ import annotations
 
 import os
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+CloudKitExtraMode = Literal["allow", "ignore", "forbid"]
 
-def _env_extra_mode(default: str = "forbid") -> str:
-    """
-    Determine the extra-mode from environment vars.
 
-    PYICLOUD_NOTES_EXTRA: allow|forbid|ignore
-    (fallback) PYICLOUD_EXTRA: allow|forbid|ignore
-    Convenience booleans: "true/1/on" -> forbid (strict), "false/0/off" -> allow
+def resolve_cloudkit_validation_extra(
+    explicit: CloudKitExtraMode | None = None,
+    *,
+    default: CloudKitExtraMode = "allow",
+) -> CloudKitExtraMode:
     """
-    raw = (
-        (os.getenv("PYICLOUD_NOTES_EXTRA") or os.getenv("PYICLOUD_EXTRA") or default)
-        .strip()
-        .lower()
-    )
+    Resolve the validation mode for CloudKit wire models.
+
+    ``PYICLOUD_CK_EXTRA`` accepts ``allow``, ``ignore``, or ``forbid``.
+    Convenience booleans remain supported for local debugging:
+      - ``true/1/on/strict`` -> ``forbid``
+      - ``false/0/off/lenient`` -> ``allow``
+
+    ``explicit`` takes precedence over the environment.
+    """
+    if explicit is not None:
+        return explicit
+
+    raw = (os.getenv("PYICLOUD_CK_EXTRA") or default).strip().lower()
 
     if raw in {"allow", "forbid", "ignore"}:
-        return raw
+        return cast(CloudKitExtraMode, raw)
 
-    # convenience switches people naturally try
     if raw in {"1", "true", "yes", "on", "strict"}:
         return "forbid"
     if raw in {"0", "false", "no", "off", "lenient"}:
         return "allow"
 
-    return default  # fall back to strict during development
-
-
-_EXTRA = _env_extra_mode()
+    return default
 
 
 class CKModel(BaseModel):
     """
-    Project-wide base model.
+    Shared base model for CloudKit wire payloads.
 
-    Default is extra='forbid' (strict) for development; switch at runtime by
-    setting an env var before import:
-      export PYICLOUD_NOTES_EXTRA=allow   # or forbid/ignore
+    Wire models stay permissive by default so unexpected Apple fields are
+    preserved. Strict reverse-engineering mode is applied at validation call
+    sites via ``model_validate(..., extra="forbid")``.
     """
 
     model_config = ConfigDict(
-        extra=_EXTRA,  # 'forbid' | 'allow' | 'ignore'
-        arbitrary_types_allowed=True,  # keep whatever you already relied upon
+        extra="allow",
+        arbitrary_types_allowed=True,
     )
 
 
-# Public API of this module
-__all__ = ["CKModel", "_env_extra_mode"]
+__all__ = ["CKModel", "CloudKitExtraMode", "resolve_cloudkit_validation_extra"]
