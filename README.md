@@ -836,57 +836,6 @@ deleted = api.hidemyemail.delete(anonymous_id)
 print(f"Deleted alias: {deleted}")
 ```
 
-## Notes
-
-You can access your iCloud notes through the `notes` property.
-
-```python
->>> api.notes
-<NotesService: 123 notes>
-```
-
-To list the most recent notes:
-
-```python
-for note in api.notes.recents():
-    print(f"{note.title} - {note.modified_at}")
-```
-
-### Exporting Notes
-
-You can export a note (including its attachments) to an HTML file using the `export_note` method:
-
-```python
-api.notes.export_note(
-    note_id="D559688F-...",
-    output_dir="./exported_notes"
-)
-```
-
-This will download all images and attachments and produce a self-contained HTML file.
-
-### Rendering Content
-
-If you only need the HTML content string (without downloading assets), use `render_note`:
-
-```python
-html_content = api.notes.render_note("D559688F-...")
-print(html_content)
-```
-
-### Folders
-
-You can also list folders and notes within them:
-
-```python
-for folder in api.notes.folders():
-    print(f"Folder: {folder.name} ({folder.id})")
-    for note in api.notes.in_folder(folder.id):
-        print(f"  - {note.title}")
-```
-
-For a more detailed example, see [`examples/notes_cli.py`](/examples/notes_cli.py).
-
 ## Examples
 
 If you want to see some code samples, see the [examples](/examples.py).
