@@ -1,9 +1,11 @@
 """Find my iPhone service."""
 
 import logging
+import threading
 import time
+from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from requests import Response
 
@@ -20,6 +22,20 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 _MAX_REFRESH_RETRIES: int = 5
 
 
+def _monitor_thread(
+    interval: float, func: Callable, stop_event: threading.Event, locate: bool = False
+) -> None:
+    """Thread function to monitor the FindMyiPhoneServiceManager."""
+    next_event: datetime = datetime.now() + timedelta(seconds=interval)
+    while not stop_event.wait(timeout=interval):
+        if next_event < datetime.now():
+            try:
+                func(locate)
+            except Exception as exc:
+                _LOGGER.debug("FindMyiPhone monitor thread error: %s", exc)
+            next_event = datetime.now() + timedelta(seconds=interval)
+
+
 class FindMyiPhoneServiceManager(BaseService):
     """The 'Find my iPhone' iCloud service
 
@@ -34,10 +50,14 @@ class FindMyiPhoneServiceManager(BaseService):
         session: PyiCloudSession,
         params: dict[str, Any],
         with_family=False,
+        refresh_interval: float | None = None,
     ) -> None:
         """Initialize the FindMyiPhoneServiceManager."""
         super().__init__(service_root, session, params)
         self._with_family: bool = with_family
+        self._refresh_interval: float = (
+            refresh_interval if refresh_interval is not None else 5.0 * 60.0
+        )
 
         fmip_endpoint: str = f"{service_root}/fmipservice/client/web"
         self._fmip_init_url: str = f"{fmip_endpoint}/initClient"
@@ -52,16 +72,20 @@ class FindMyiPhoneServiceManager(BaseService):
         self._devices_names: list[str] = []
         self._server_ctx: dict[str, Any] | None = None
         self._user_info: dict[str, Any] | None = None
-        self.refresh_client_with_reauth()
+        self._monitor: Optional[threading.Thread] = None
+        self.stop_event: threading.Event = threading.Event()
 
-    def refresh_client_with_reauth(self, retry: bool = False) -> None:
+        self._refresh_client_with_reauth(locate=True)
+
+    def _refresh_client_with_reauth(self, locate: bool, retry: bool = False) -> None:
         """
         Refreshes the FindMyiPhoneService endpoint with re-authentication.
         This ensures that the location data is up-to-date.
         """
         # Refresh the client (own devices first)
+        self.stop_event.set()
         try:
-            self._refresh_client(locate=True)
+            self._refresh_client(locate=locate)
         except PyiCloudAuthRequiredException:
             if retry is True:
                 raise
@@ -69,8 +93,15 @@ class FindMyiPhoneServiceManager(BaseService):
             _LOGGER.debug("Re-authenticating session")
             self._server_ctx = None
             self.session.service.authenticate(force_refresh=True)
-            self.refresh_client_with_reauth(retry=True)
+            self._refresh_client_with_reauth(locate=locate, retry=True)
             return
+
+        # Initialize devices (including family devices if enabled)
+        self._initialize_devices(locate=locate)
+        self._start_monitor_thread()
+
+    def _initialize_devices(self, locate: bool) -> None:
+        """Initializes the devices for the FindMyiPhoneServiceManager."""
 
         # If family sharing is enabled, we may need to poll until all devices are ready
         # This is indicated by the deviceFetchStatus being "LOADING"
@@ -88,7 +119,7 @@ class FindMyiPhoneServiceManager(BaseService):
 
             if needs_refresh:
                 time.sleep(0.1)
-                self._refresh_client()
+                self._refresh_client(locate=locate)
                 retries += 1
                 if retries >= _MAX_REFRESH_RETRIES:
                     _LOGGER.debug("Max retries reached when fetching family devices")
@@ -99,9 +130,24 @@ class FindMyiPhoneServiceManager(BaseService):
         if not self._devices:
             raise PyiCloudNoDevicesException()
 
-        _LOGGER.debug("Number of devices found: %d", len(self._devices))
+        _LOGGER.info("Number of devices found: %d", len(self._devices))
 
-    def _refresh_client(self, locate: bool = False) -> None:
+    def _start_monitor_thread(self) -> None:
+        """Starts the monitor thread for the FindMyiPhoneServiceManager."""
+        if not self.is_alive:
+            self._monitor = threading.Thread(
+                target=_monitor_thread,
+                kwargs={
+                    "func": self._refresh_client,
+                    "interval": self._refresh_interval,
+                    "stop_event": self.stop_event,
+                },
+                daemon=True,
+            )
+            self.stop_event.clear()
+            self._monitor.start()
+
+    def _refresh_client(self, locate: bool) -> None:
         """
         Refreshes the FindMyiPhoneService endpoint, this ensures that the location data
         is up-to-date.
@@ -165,8 +211,15 @@ class FindMyiPhoneServiceManager(BaseService):
 
         self._devices_names = list(self._devices.keys())
 
+    def refresh(self, locate: bool = True) -> None:
+        """Public method to refresh the FindMyiPhoneService endpoint."""
+        self._refresh_client_with_reauth(locate=locate)
+
     def __getitem__(self, key: str | int) -> "AppleDevice":
         """Gets a device by name or index."""
+        if not self.is_alive:
+            self._refresh_client_with_reauth(locate=True)
+
         if isinstance(key, int):
             key = self._devices_names[key]
         return self._devices[key]
@@ -181,11 +234,21 @@ class FindMyiPhoneServiceManager(BaseService):
 
     def __iter__(self) -> Iterator["AppleDevice"]:
         """Iterates over the devices."""
+
+        if not self.is_alive:
+            self._refresh_client_with_reauth(locate=True)
         return iter(self._devices.values())
 
     def __len__(self) -> int:
         """Returns the number of devices."""
+        if not self.is_alive:
+            self._refresh_client_with_reauth(locate=True)
         return len(self._devices)
+
+    @property
+    def is_alive(self) -> bool:
+        """Indicates if the service is alive."""
+        return self._monitor is not None and self._monitor.is_alive()
 
     @property
     def devices(self) -> "MappingProxyType[str, AppleDevice]":
@@ -235,7 +298,8 @@ class AppleDevice:
     @property
     def location(self) -> Optional[dict[str, Any]]:
         """Updates the device location."""
-        self._manager.refresh_client_with_reauth()
+        if self.location_available is False:
+            return None
         return self._content["location"]
 
     def status(self, additional: Optional[list[str]] = None) -> dict[str, Any]:
@@ -243,7 +307,6 @@ class AppleDevice:
 
         This returns only a subset of possible properties.
         """
-        self._manager.refresh_client_with_reauth()
         fields: list[str] = [
             "batteryLevel",
             "deviceDisplayName",
@@ -263,6 +326,8 @@ class AppleDevice:
 
         It's possible to pass a custom message by changing the `subject`.
         """
+        if self.sound_available is False:
+            raise PyiCloudServiceUnavailable("Sound is not available for this device")
         data: dict[str, Any] = {
             "device": self._content["id"],
             "subject": subject,
@@ -272,18 +337,30 @@ class AppleDevice:
         self.session.post(self._sound_url, params=self._params, json=data)
 
     def display_message(
-        self, subject="Find My iPhone Alert", message="This is a note", sounds=False
+        self,
+        subject="Find My iPhone Alert",
+        message="This is a note",
+        sounds=False,
+        vibrate=False,
+        strobe=False,
     ) -> None:
-        """Send a request to the device to play a sound.
+        """Send a request to the device to a display a message.
 
         It's possible to pass a custom message by changing the `subject`.
         """
+        if self.messaging_available is False:
+            raise PyiCloudServiceUnavailable(
+                "Messaging is not available for this device"
+            )
+
         data: dict[str, Any] = {
             "device": self._content["id"],
             "subject": subject,
-            "sound": sounds,
             "userText": True,
             "text": message,
+            "sound": sounds,
+            "vibrate": vibrate,
+            "strobe": strobe,
         }
 
         self.session.post(self._message_url, params=self._params, json=data)
@@ -300,6 +377,11 @@ class AppleDevice:
         been passed, then the person holding the device can call
         the number without entering the passcode.
         """
+        if self.lost_mode_available is False:
+            raise PyiCloudServiceUnavailable(
+                "Lost mode is not available for this device"
+            )
+
         data: dict[str, Any] = {
             "text": text,
             "userText": True,
@@ -329,6 +411,9 @@ class AppleDevice:
         newpasscode: str = "",
     ) -> None:
         """Send a request to the device to start a remote erase."""
+        if self.erase_available is False:
+            raise PyiCloudServiceUnavailable("Erase is not available for this device")
+
         data: dict[str, Any] = {
             "authToken": self._get_erase_token(),
             "text": text,
@@ -341,23 +426,81 @@ class AppleDevice:
     @property
     def data(self) -> dict[str, Any]:
         """Gets the device data."""
+        if not self._manager.is_alive:
+            self._manager.refresh()
+
         return self._content
 
     def __getitem__(self, key) -> Any:
         """Gets an attribute of the device data."""
+        if not self._manager.is_alive:
+            self._manager.refresh()
+
         return self._content[key]
 
     def __getattr__(self, attr) -> Any:
         """Gets an attribute of the device data."""
+        if not self._manager.is_alive:
+            self._manager.refresh()
+
         if attr in self._content:
             return self._content[attr]
         raise AttributeError(
             f"'{type(self).__name__}' object has no attribute '{attr}'"
         )
 
+    @property
+    def name(self) -> str:
+        """Gets the device name."""
+        return self.data.get("name", "")
+
+    @property
+    def model(self) -> str:
+        """Gets the device model."""
+        return self.data.get("deviceModel", "")
+
+    @property
+    def model_name(self) -> str:
+        """Gets the device model name."""
+        return self.data.get("deviceDisplayName", "")
+
+    @property
+    def device_type(self) -> str:
+        """Gets the device type."""
+        return self.data.get("deviceClass", "")
+
+    @property
+    def lost_mode_available(self) -> bool:
+        """Indicates if lost mode is available for the device."""
+        return self.data.get("lostModeCapable", False)
+
+    @property
+    def messaging_available(self) -> bool:
+        """Indicates if messaging is available for the device."""
+        return self.data.get("features", {}).get("MSG", False)
+
+    @property
+    def sound_available(self) -> bool:
+        """Indicates if sound is available for the device."""
+        return self.data.get("features", {}).get("SND", False)
+
+    @property
+    def erase_available(self) -> bool:
+        """Indicates if erase is available for the device."""
+        return self.data.get("features", {}).get("WIP", False)
+
+    @property
+    def location_available(self) -> bool:
+        """Indicates if location is available for the device."""
+        return (
+            self.data.get("features", {}).get("LOC", False)
+            and "location" in self._content
+            and self._content["location"] is not None
+        )
+
     def __str__(self) -> str:
         """String representation of the device."""
-        return f"{self['deviceDisplayName']}: {self['name']}"
+        return f"{self.model_name}: {self.name}"
 
     def __repr__(self) -> str:
         """Representation of the device."""

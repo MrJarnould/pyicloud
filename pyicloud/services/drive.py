@@ -43,7 +43,9 @@ class DriveService(BaseService):
         self._trash: Optional[DriveNode] = None
 
     def _get_token_from_cookie(self) -> dict[str, Any]:
-        for cookie in self.session.cookies:
+        # Copy cookies to avoid "dictionary changed size during iteration"
+        # when concurrent HTTP responses modify the cookie jar
+        for cookie in self.session.cookies.copy():
             if cookie.name == COOKIE_APPLE_WEBAUTH_VALIDATE and cookie.value:
                 match: Optional[Match[str]] = search(r"\bt=([^:]+)", cookie.value)
                 if match is None:
@@ -261,6 +263,32 @@ class DriveService(BaseService):
         self._raise_if_error(request)
         return request.json()
 
+    def move_nodes_to_node(self, nodes: list["DriveNode"], destination: "DriveNode"):
+        """Moves iCloud Drive node(s) to the specified folder"""
+        node_ids = [node.data["drivewsid"] for node in nodes]
+        etags = [node.data["etag"] for node in nodes]
+
+        items = zip(node_ids, etags, node_ids)  # clientId == node_id
+
+        # when moving a node on icloud.com, the clientID is set to the node_id:
+        request: Response = self.session.post(
+            self.service_root + "/moveItems",
+            params=self.params,
+            json={
+                "destinationDrivewsId": destination.data["drivewsid"],
+                "items": [
+                    {
+                        "drivewsid": _drivewsid,
+                        "etag": _etag,
+                        "clientId": _client_id,
+                    }
+                    for _drivewsid, _etag, _client_id in items
+                ],
+            },
+        )
+        self._raise_if_error(request)
+        return request.json()
+
     def move_items_to_trash(self, node_id: str, etag: str):
         """Moves an iCloud Drive node to the trash bin"""
         # when moving a node to the trash on icloud.com, the clientID is set to the node_id:
@@ -406,16 +434,17 @@ class DriveNode:
         """Gets the node children."""
         if not self._children or force:
             if "items" not in self.data or force:
-                self.data.update(
-                    self.connection.get_node_data(
-                        self.data["drivewsid"], self.data.get("shareID")
-                    )
+                node_data = self.connection.get_node_data(
+                    self.data["drivewsid"], self.data.get("shareID")
                 )
+                # Copy to avoid dict mutation during iteration in concurrent access
+                self.data = {**self.data, **node_data}
             if "items" not in self.data:
                 raise KeyError(f"No items in folder, status: {self.data['status']}")
+            # Copy items list to avoid "dictionary changed size during iteration"
             self._children = [
                 DriveNode(self.connection, item_data)
-                for item_data in self.data["items"]
+                for item_data in self.data["items"].copy()
             ]
         return self._children
 

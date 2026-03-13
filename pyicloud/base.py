@@ -5,7 +5,7 @@ import getpass
 import json
 import logging
 import time
-from os import environ, mkdir, path
+from os import chmod, environ, makedirs, path, umask
 from tempfile import gettempdir
 from typing import Any, Dict, List, Optional
 from uuid import uuid1
@@ -117,21 +117,22 @@ class PyiCloudService:
         self._home_endpoint: str = f"https://www.icloud.com{icloud_china}"
         self._setup_endpoint: str = f"https://setup.icloud.com{icloud_china}/setup/ws/1"
 
-    def _setup_cookie_directory(self, cookie_directory: Optional[str]) -> str:
+    def _setup_cookie_directory(self, cookie_directory: Optional[str] = None) -> str:
         """Set up the cookie directory for the service."""
         _cookie_directory: str = ""
         if cookie_directory:
-            _cookie_directory = path.expanduser(path.normpath(cookie_directory))
-            if not path.exists(_cookie_directory):
-                mkdir(_cookie_directory, 0o700)
+            _cookie_directory = path.normpath(path.expanduser(cookie_directory))
         else:
             topdir: str = path.join(gettempdir(), "pyicloud")
+            makedirs(topdir, exist_ok=True)
+            chmod(topdir, 0o1777)
             _cookie_directory = path.join(topdir, getpass.getuser())
-            if not path.exists(topdir):
-                mkdir(topdir, 0o777)
-            if not path.exists(_cookie_directory):
-                mkdir(_cookie_directory, 0o700)
 
+        old_umask = umask(0o077)
+        try:
+            makedirs(_cookie_directory, exist_ok=True)
+        finally:
+            umask(old_umask)
         return _cookie_directory
 
     def __init__(
@@ -146,6 +147,7 @@ class PyiCloudService:
         accept_terms: bool = False,
         *,
         cloudkit_validation_extra: Optional[CloudKitExtraMode] = None,
+        refresh_interval: float | None = None,
     ) -> None:
         self._is_china_mainland: bool = (
             china_mainland or environ.get("icloud_china", "0") == "1"
@@ -156,6 +158,7 @@ class PyiCloudService:
 
         self._apple_id: str = apple_id
         self._accept_terms: bool = accept_terms
+        self._refresh_interval: float | None = refresh_interval
 
         if self._password_raw is None:
             self._password_raw = get_password_from_keyring(apple_id)
@@ -806,6 +809,7 @@ class PyiCloudService:
                     session=self.session,
                     params=self.params,
                     with_family=self._with_family,
+                    refresh_interval=self._refresh_interval,
                 )
             except PyiCloudServiceNotActivatedException as error:
                 raise PyiCloudServiceUnavailable(

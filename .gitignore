@@ -34,7 +34,6 @@ htmlcov/
 test-reports/
 test-results.xml
 test-output.xml
-test.py
 # Translations
 *.mo
 
@@ -86,3 +85,4 @@ fetch_devices_*.py
 *_examples/
 sample_*.json
 test_real_data.py
+/test*.py
