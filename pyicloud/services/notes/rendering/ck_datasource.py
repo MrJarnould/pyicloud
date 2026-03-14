@@ -123,6 +123,7 @@ class CloudKitNoteDataSource(NoteDataSource):
             for k in keys:
                 self._uti[k] = uti_val
         uti_l = (uti_val or "").lower()
+        is_url_uti = uti_l == "public.url"
         is_pdf_uti = uti_l in ("com.adobe.pdf", "public.pdf", "com.apple.paper.doc.pdf")
         is_image_uti = uti_l.startswith("public.image") or uti_l in {
             "public.jpeg",
@@ -274,8 +275,10 @@ class CloudKitNoteDataSource(NoteDataSource):
                     self._title[k] = dec_title
                 break
 
-        # Last resort: use the URL itself as the title if available
-        if not found_title:
+        # For web links, a URL is still a useful visible label when no richer
+        # title is available. Avoid applying this fallback to images/media so
+        # signed CloudKit URLs do not leak into rendered labels or alt text.
+        if not found_title and is_url_uti:
             # We look for the URLStringEncrypted which we might have already decoded
             url_val = self._primary_asset_url.get(keys[0] if keys else "")
             # Or try URLString raw

@@ -263,8 +263,9 @@ class RemindersWriteAPI:
         flagged: bool = False,
         all_day: bool = False,
         time_zone: Optional[str] = None,
+        parent_reminder_id: Optional[str] = None,
     ) -> Reminder:
-        """Create a new Reminder inside a List."""
+        """Create a new Reminder inside a List, optionally as a child reminder."""
         reminder_uuid = str(uuid.uuid4()).upper()
         record_name = f"Reminder/{reminder_uuid}"
 
@@ -319,6 +320,12 @@ class RemindersWriteAPI:
 
         if time_zone:
             record_fields["TimeZone"] = {"type": "STRING", "value": time_zone}
+
+        if parent_reminder_id:
+            record_fields["ParentReminder"] = {
+                "type": "REFERENCE",
+                "value": {"recordName": parent_reminder_id, "action": "VALIDATE"},
+            }
 
         op = CKModifyOperation(
             operationType="create",

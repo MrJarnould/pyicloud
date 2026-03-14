@@ -1197,6 +1197,30 @@ class TestMutationErrorHandling:
 
         assert reminder.alarm_ids == []
 
+    def test_create_child_reminder_sets_parent_reference(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(records=[], syncToken="mock")
+        expected = Reminder(
+            id="Reminder/CHILD-001",
+            list_id="List/LIST-001",
+            title="Child reminder",
+            parent_reminder_id="Reminder/PARENT-001",
+        )
+        svc._writes._lookup_created_reminder = MagicMock(return_value=expected)
+
+        created = svc.create(
+            list_id="List/LIST-001",
+            title="Child reminder",
+            parent_reminder_id="Reminder/PARENT-001",
+        )
+
+        op = svc._raw.modify.call_args.kwargs["operations"][0]
+        parent_field = op.record.fields["ParentReminder"]
+        assert parent_field.type_tag == "REFERENCE"
+        assert parent_field.value.recordName == "Reminder/PARENT-001"
+        assert created.parent_reminder_id == "Reminder/PARENT-001"
+
 
 class TestAdditionalWriteApis:
     """Validate payload shape and local state updates for newly added write APIs."""

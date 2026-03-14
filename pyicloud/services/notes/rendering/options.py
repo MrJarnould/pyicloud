@@ -9,13 +9,18 @@ module defaults and/or environment fallbacks".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 
 @dataclass(frozen=True, slots=True)
 class ExportConfig:
     # Logging/debug
     debug: bool = False
+
+    # Export policy
+    export_mode: Literal["archival", "lightweight"] = "archival"
+    assets_dir: Optional[str] = None
+    full_page: Optional[bool] = None
 
     # Image fidelity: when a Media record is present for image attachments,
     # prefer it over preview images. Keep this True for best quality.

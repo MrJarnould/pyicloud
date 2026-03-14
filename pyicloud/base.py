@@ -145,9 +145,9 @@ class PyiCloudService:
         with_family: bool = True,
         china_mainland: bool = False,
         accept_terms: bool = False,
+        refresh_interval: float | None = None,
         *,
         cloudkit_validation_extra: Optional[CloudKitExtraMode] = None,
-        refresh_interval: float | None = None,
     ) -> None:
         self._is_china_mainland: bool = (
             china_mainland or environ.get("icloud_china", "0") == "1"

@@ -1,18 +1,21 @@
 """
-High-level Notes service (DX-first).
+High-level Apple Notes service built on top of a preconfigured CloudKit client.
 
 Public API:
   - NotesService.recents(limit=50) -> Iterable[NoteSummary]
-  - NotesService.iter_all(page_size=200, since=None) -> Iterable[NoteSummary]
-  - NotesService.folders() -> Iterable[NoteFolder]
   - NotesService.recents_in_folder(folder_id, limit=20) -> Iterable[NoteSummary]
+  - NotesService.iter_all(since=None) -> Iterable[NoteSummary]
+  - NotesService.folders() -> Iterable[NoteFolder]
   - NotesService.in_folder(folder_id, limit=None) -> Iterable[NoteSummary]
   - NotesService.get(note_id, with_attachments=False) -> Note
   - NotesService.sync_cursor() -> str
-  - NotesService.iter_changes(since=None, page_size=200) -> Iterable[ChangeEvent]
-  - NotesService.raw -> CloudKitNotesClient (escape hatch)
+  - NotesService.export_note(note_id, output_dir, **config_kwargs) -> str
+  - NotesService.render_note(note_id, **config_kwargs) -> str
+  - NotesService.iter_changes(since=None) -> Iterable[ChangeEvent]
+  - NotesService.raw -> CloudKitNotesClient
 
-This module exposes developer-friendly typed models and hides CloudKit details.
+Prefer the typed service methods for normal use. ``raw`` is an escape hatch for
+advanced or unsupported CloudKit workflows.
 """
 
 from __future__ import annotations
@@ -74,7 +77,12 @@ class NoteLockedError(NotesError):
 
 class NotesService(BaseService):
     """
-    Developer-first Notes API. Uses the preconfigured CloudKit raw client under the hood.
+    Typed, developer-friendly Notes API.
+
+    The service exposes lightweight listing helpers, full-note retrieval,
+    attachment download helpers, and HTML render/export utilities while hiding
+    most CloudKit details behind ``NoteSummary``, ``Note``, and ``Attachment``
+    models.
     """
 
     _CONTAINER = "com.apple.notes"
@@ -111,8 +119,14 @@ class NotesService(BaseService):
 
     def recents(self, *, limit: int = 50) -> Iterable[NoteSummary]:
         """
-        Fast, feed-style listing of the newest notes (most-recent first).
-        Cheap server query via SearchIndexes. Use for UI views.
+        Yield the newest note summaries, ordered most-recent first.
+
+        Args:
+            limit: Maximum number of notes to yield.
+
+        Yields:
+            ``NoteSummary`` instances with lightweight metadata suitable for
+            feeds, selectors, or navigation UIs.
         """
         if limit <= 0:
             return
@@ -172,9 +186,10 @@ class NotesService(BaseService):
         self, folder_id: str, *, limit: int = 20
     ) -> Iterable[NoteSummary]:
         """
-        Fast helper: filter the global recents stream by folder.
-        Returns up to `limit` most-recent notes in `folder_id`, without scanning
-        the full /changes/zone history (which can be slow for old folders).
+        Yield recent note summaries that belong to ``folder_id``.
+
+        This is a convenience helper that filters the global recents feed rather
+        than scanning the full Notes history.
         """
         if limit <= 0:
             return
@@ -196,9 +211,15 @@ class NotesService(BaseService):
 
     def iter_all(self, *, since: Optional[str] = None) -> Iterable[NoteSummary]:
         """
-        Iterate every note via the CloudKit changes feed.
-        Use for exports, indexing, or building local caches.
-        If `since` is provided (sync token), yields only changes since that cursor.
+        Yield note summaries from the Notes changes feed.
+
+        Args:
+            since: Optional sync token from ``sync_cursor()``. When provided, the
+                iterator yields only note records changed since that cursor.
+
+        Yields:
+            ``NoteSummary`` instances for full exports, indexing jobs, or local
+            cache refreshes.
         """
         LOGGER.debug("Iterating all notes%s", f" since={since}" if since else "")
         for zone in self._raw.changes(
@@ -226,7 +247,10 @@ class NotesService(BaseService):
 
     def folders(self) -> Iterable[NoteFolder]:
         """
-        Enumerate top-level Notes folders. Use to build navigation UIs or resolve folder IDs.
+        Yield top-level Notes folders as ``NoteFolder`` models.
+
+        Use this to build folder navigation or resolve folder IDs before calling
+        ``in_folder()``.
         """
         desired_keys = [
             NotesDesiredKey.TITLE_ENCRYPTED,
@@ -280,8 +304,11 @@ class NotesService(BaseService):
         self, folder_id: str, *, limit: Optional[int] = None
     ) -> Iterable[NoteSummary]:
         """
-        List notes that belong to a specific folder (newest first).
-        Stops after `limit` if provided.
+        Yield non-deleted notes in ``folder_id``, ordered newest first.
+
+        Args:
+            folder_id: Folder identifier from ``folders()`` or note metadata.
+            limit: Optional maximum number of notes to yield.
         """
         emitted = 0
         LOGGER.debug(
@@ -324,9 +351,17 @@ class NotesService(BaseService):
 
     def get(self, note_id: str, *, with_attachments: bool = False) -> Note:
         """
-        Fetch a single note with full body text if available.
-        Raises NoteNotFound if the note doesn't exist.
-        Raises NoteLockedError if the note is passphrase-locked and content is inaccessible.
+        Return a single note with decoded text and optional attachment metadata.
+
+        Args:
+            note_id: The CloudKit note record identifier.
+            with_attachments: When ``True``, resolve ``Attachment`` metadata and
+                include it on the returned ``Note``.
+
+        Raises:
+            NoteNotFound: If the note does not exist.
+            NoteLockedError: If the note is passphrase-locked and its content
+                cannot be read.
         """
         LOGGER.debug(
             "Fetching note: note_id=%s with_attachments=%s", note_id, with_attachments
@@ -406,22 +441,32 @@ class NotesService(BaseService):
 
     def sync_cursor(self) -> str:
         """
-        Return the current sync token for the Notes zone.
+        Return the current Notes sync token.
+
+        Persist this token and pass it back to ``iter_all(since=...)`` or
+        ``iter_changes(since=...)`` on a later run to perform incremental syncs.
         """
         LOGGER.debug("Fetching sync cursor for Notes zone")
         return self._raw.current_sync_token(zone_name="Notes")
 
     def export_note(self, note_id: str, output_dir: str, **config_kwargs) -> str:
         """
-        Export a note to HTML with assets saved to the output directory.
+        Export a note to HTML on disk and return the generated file path.
 
         Args:
             note_id: The UUID of the note to export.
-            output_dir: Local directory to save the HTML and assets.
-            **config_kwargs: Options for ExportConfig (e.g. embed_images, link_rel).
+            output_dir: Directory where the HTML file will be written.
+            **config_kwargs: Keyword arguments forwarded to ``ExportConfig``,
+                including ``export_mode``, ``assets_dir``, ``full_page``,
+                ``preview_appearance``, ``pdf_object_height``, and link behavior
+                settings.
 
         Returns:
-            Path to the generated HTML file.
+            The path to the generated HTML file.
+
+        Notes:
+            By default, this produces archival output: a full HTML page with
+            local asset downloads.
         """
         resp = self._raw.lookup([note_id])
         target = None
@@ -445,11 +490,16 @@ class NotesService(BaseService):
 
     def render_note(self, note_id: str, **config_kwargs) -> str:
         """
-        Render a note to an HTML fragment string (does not download assets).
+        Render a note to an HTML fragment string.
 
         Args:
             note_id: The UUID of the note to render.
-            **config_kwargs: Options for ExportConfig.
+            **config_kwargs: Keyword arguments forwarded to ``ExportConfig`` to
+                tune preview selection or link behavior for the rendered HTML.
+
+        Returns:
+            An HTML fragment string. This method does not download assets or
+            write files to disk.
         """
         resp = self._raw.lookup([note_id])
         target = None
@@ -475,8 +525,10 @@ class NotesService(BaseService):
 
     def iter_changes(self, *, since: Optional[str] = None) -> Iterable[ChangeEvent]:
         """
-        Iterate change events since an optional sync token.
-        Emits 'updated' for upserts and 'deleted' for tombstones.
+        Yield ``ChangeEvent`` items from the Notes changes feed.
+
+        Pass a sync token from ``sync_cursor()`` to process only new changes
+        since a previous run.
         """
         LOGGER.debug("Iterating changes%s", f" since={since}" if since else "")
         for zone in self._raw.changes(
@@ -554,7 +606,10 @@ class NotesService(BaseService):
     @property
     def raw(self) -> CloudKitNotesClient:
         """
-        Escape hatch: preconfigured, authenticated CloudKit client for Notes.
+        Return the authenticated low-level Notes CloudKit client.
+
+        This is an escape hatch for advanced or unsupported operations; prefer
+        the typed service methods above for normal use.
         """
         return self._raw
 

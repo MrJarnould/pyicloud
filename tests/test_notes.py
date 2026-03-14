@@ -1,5 +1,6 @@
 """Tests for the Notes service."""
 
+import importlib
 import os
 import unittest
 from unittest.mock import MagicMock, patch
@@ -168,6 +169,54 @@ class NotesServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(service.raw._validation_extra, "ignore")
+
+    def test_notes_exporter_module_imports(self):
+        module = importlib.import_module("pyicloud.services.notes.rendering.exporter")
+
+        self.assertTrue(hasattr(module, "NoteExporter"))
+
+    def test_notes_service_render_note_uses_lazy_importer(self):
+        record = CKRecord.model_validate(
+            {"recordName": "Note/1", "recordType": "Note", "fields": {}}
+        )
+        self.service.raw.lookup = MagicMock(return_value=MagicMock(records=[record]))
+
+        with (
+            patch(
+                "pyicloud.services.notes.rendering.exporter.decode_and_parse_note",
+                return_value=MagicMock(name="note"),
+            ),
+            patch(
+                "pyicloud.services.notes.rendering.exporter.build_datasource",
+                return_value=(MagicMock(name="datasource"), []),
+            ),
+            patch(
+                "pyicloud.services.notes.rendering.renderer.NoteRenderer.render",
+                return_value="<p>rendered</p>",
+            ) as mock_render,
+        ):
+            rendered = self.service.render_note("Note/1")
+
+        self.assertEqual(rendered, "<p>rendered</p>")
+        mock_render.assert_called_once()
+
+    def test_notes_service_export_note_uses_lazy_importer(self):
+        record = CKRecord.model_validate(
+            {"recordName": "Note/1", "recordType": "Note", "fields": {}}
+        )
+        self.service.raw.lookup = MagicMock(return_value=MagicMock(records=[record]))
+        output_path = "/tmp/python-test-results/notes-export/note.html"
+
+        with patch(
+            "pyicloud.services.notes.rendering.exporter.NoteExporter.export",
+            return_value=output_path,
+        ) as mock_export:
+            exported = self.service.export_note(
+                "Note/1", "/tmp/python-test-results/notes-export"
+            )
+
+        self.assertEqual(exported, output_path)
+        mock_export.assert_called_once()
 
     def test_shared_cloudkit_share_allows_encrypted_string_fields(self):
         """Shared cloudkit.share records may expose STRING + isEncrypted fields."""

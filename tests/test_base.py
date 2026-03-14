@@ -3,6 +3,7 @@ Test the PyiCloudService and PyiCloudSession classes."""
 
 # pylint: disable=protected-access
 
+import secrets
 from typing import Any, List
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -55,6 +56,50 @@ def test_authenticate_with_force_refresh(pyicloud_service: PyiCloudService) -> N
         pyicloud_service.authenticate(force_refresh=True, service="test_service")
         mock_post_response.assert_called_once()
         validate_token.assert_called_once()
+
+
+def test_constructor_accepts_positional_refresh_interval() -> None:
+    """refresh_interval stays positional-compatible with upstream."""
+    with (
+        patch("pyicloud.PyiCloudService.authenticate") as mock_authenticate,
+        patch("pyicloud.PyiCloudService._setup_cookie_directory") as mock_setup_dir,
+        patch("builtins.open", new_callable=mock_open),
+    ):
+        mock_authenticate.return_value = None
+        mock_setup_dir.return_value = "/tmp/pyicloud/cookies"
+
+        service = PyiCloudService(
+            "test@example.com",
+            secrets.token_hex(32),
+            None,
+            True,
+            None,
+            True,
+            False,
+            False,
+            30.0,
+        )
+
+        assert service._refresh_interval == 30.0
+
+
+def test_constructor_accepts_keyword_only_cloudkit_validation_extra() -> None:
+    """cloudkit_validation_extra remains a keyword-only escape hatch."""
+    with (
+        patch("pyicloud.PyiCloudService.authenticate") as mock_authenticate,
+        patch("pyicloud.PyiCloudService._setup_cookie_directory") as mock_setup_dir,
+        patch("builtins.open", new_callable=mock_open),
+    ):
+        mock_authenticate.return_value = None
+        mock_setup_dir.return_value = "/tmp/pyicloud/cookies"
+
+        service = PyiCloudService(
+            "test@example.com",
+            secrets.token_hex(32),
+            cloudkit_validation_extra="ignore",
+        )
+
+        assert service._cloudkit_validation_extra == "ignore"
 
 
 def test_authenticate_with_missing_token(pyicloud_service: PyiCloudService) -> None:
@@ -1315,6 +1360,7 @@ def test_reminders_returns_service(
             service_root="https://reminders.example.com",
             session=pyicloud_service.session,
             params=pyicloud_service.params,
+            cloudkit_validation_extra=None,
         )
         assert result == mock_reminders_service
 

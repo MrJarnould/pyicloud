@@ -303,6 +303,7 @@ def main() -> int:
             flagged: bool = False,
             all_day: bool = False,
             time_zone_name: Optional[str] = None,
+            parent_reminder_id: Optional[str] = None,
         ) -> Reminder:
             title = f"{args.prefix} | {suffix}"
             reminder = reminders_api.create(
@@ -315,6 +316,7 @@ def main() -> int:
                 flagged=flagged,
                 all_day=all_day,
                 time_zone=time_zone_name,
+                parent_reminder_id=parent_reminder_id,
             )
             state.created[case_name] = reminder
             print(f"  [CREATE] {case_name}: {reminder.id}")
@@ -334,6 +336,7 @@ def main() -> int:
             expected_flagged: Optional[bool] = None,
             expected_all_day: Optional[bool] = None,
             expected_time_zone: Optional[str] = None,
+            expected_parent_reminder_id: Optional[str] = None,
         ) -> Reminder:
             fresh = reminders_api.get(reminder_id)
 
@@ -393,6 +396,16 @@ def main() -> int:
                     f"expected={expected_time_zone!r}, got={fresh.time_zone!r}",
                 )
 
+            if expected_parent_reminder_id is not None:
+                tracker.expect(
+                    fresh.parent_reminder_id == expected_parent_reminder_id,
+                    f"{case_name}: parent reminder round-trip",
+                    (
+                        f"expected={expected_parent_reminder_id!r}, "
+                        f"got={fresh.parent_reminder_id!r}"
+                    ),
+                )
+
             return fresh
 
         banner("3) Create Matrix (All Supported create() Configurations)")
@@ -423,6 +436,18 @@ def main() -> int:
             expected_priority=PRIORITY_NONE,
             expected_flagged=False,
             expected_all_day=False,
+        )
+
+        child_case = create_case(
+            "child_reminder",
+            "child reminder",
+            desc="Child reminder linked to the basic reminder.",
+            parent_reminder_id=basic.id,
+        )
+        assert_round_trip(
+            "child_reminder",
+            child_case.id,
+            expected_parent_reminder_id=basic.id,
         )
 
         completed = create_case(

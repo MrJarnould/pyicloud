@@ -16,8 +16,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from rich.console import Console
 
+from pyicloud.common.cloudkit import CKRecord
+
 from ..decoding import BodyDecoder
-from ..models.cloudkit import CKRecord
 from ..protobuf import notes_pb2 as pb
 from .ck_datasource import CloudKitNoteDataSource
 from .options import ExportConfig
@@ -193,6 +194,7 @@ def download_pdf_assets(
     *,
     assets_dir: str,
     out_dir: str,
+    config: Optional[ExportConfig] = None,
 ) -> Dict[str, str]:
     """Download PDFs for attachments and rewrite datasource URLs to local paths.
 
@@ -251,6 +253,7 @@ def download_image_assets(
     *,
     assets_dir: str,
     out_dir: str,
+    config: Optional[ExportConfig] = None,
 ) -> Dict[str, str]:
     """Download image attachments and rewrite datasource URLs to local paths.
 
@@ -260,7 +263,7 @@ def download_image_assets(
     os.makedirs(assets_dir, exist_ok=True)
     updated: Dict[str, str] = {}
 
-    conf = ExportConfig()
+    conf = config or ExportConfig()
 
     def _infer_image_ext(head: bytes) -> Optional[str]:
         try:
@@ -334,6 +337,7 @@ def download_av_assets(
     *,
     assets_dir: str,
     out_dir: str,
+    config: Optional[ExportConfig] = None,
 ) -> Dict[str, str]:
     """Download audio/video attachments and rewrite datasource URLs to local paths.
 
@@ -435,6 +439,7 @@ def download_vcard_assets(
     *,
     assets_dir: str,
     out_dir: str,
+    config: Optional[ExportConfig] = None,
 ) -> Dict[str, str]:
     """Download VCard (contact) attachments and rewrite datasource URLs to local paths.
 
@@ -534,22 +539,47 @@ class NoteExporter:
         # 2. Build Datasource
         ds, att_ids = build_datasource(self.client, note_record, note, self.config)
 
-        # 3. Download Assets
-        # Use a sub-folder based on the note ID to avoid collisions
-        assets_dir = os.path.join(output_dir, "assets", note_record.recordName)
+        # 3. Download Assets when doing archival export
+        export_mode = str(getattr(self.config, "export_mode", "archival") or "archival")
+        export_mode = export_mode.strip().lower()
+        if export_mode == "archival":
+            assets_root = getattr(self.config, "assets_dir", None) or os.path.join(
+                output_dir, "assets"
+            )
+            assets_dir = os.path.join(assets_root, note_record.recordName)
 
-        download_pdf_assets(
-            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
-        )
-        download_image_assets(
-            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
-        )
-        download_av_assets(
-            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
-        )
-        download_vcard_assets(
-            self.client, ds, att_ids, assets_dir=assets_dir, out_dir=output_dir
-        )
+            download_pdf_assets(
+                self.client,
+                ds,
+                att_ids,
+                assets_dir=assets_dir,
+                out_dir=output_dir,
+                config=self.config,
+            )
+            download_image_assets(
+                self.client,
+                ds,
+                att_ids,
+                assets_dir=assets_dir,
+                out_dir=output_dir,
+                config=self.config,
+            )
+            download_av_assets(
+                self.client,
+                ds,
+                att_ids,
+                assets_dir=assets_dir,
+                out_dir=output_dir,
+                config=self.config,
+            )
+            download_vcard_assets(
+                self.client,
+                ds,
+                att_ids,
+                assets_dir=assets_dir,
+                out_dir=output_dir,
+                config=self.config,
+            )
 
         # 4. Render
         html_fragment = self.renderer.render(note, ds)
@@ -566,6 +596,14 @@ class NoteExporter:
             except Exception:
                 pass
 
+        full_page = getattr(self.config, "full_page", None)
+        if full_page is None:
+            full_page = True
+
         return write_html(
-            title, html_fragment, output_dir, full_page=True, filename=filename
+            title,
+            html_fragment,
+            output_dir,
+            full_page=bool(full_page),
+            filename=filename,
         )
