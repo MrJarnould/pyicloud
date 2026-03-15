@@ -305,6 +305,15 @@ class RemindersWriteAPI:
         child_record_name = _as_record_name(getattr(child, "id"), prefix)
         child_uuid = _as_raw_id(child_record_name, prefix)
         reminder_record_name = self._reminder_record_name(reminder.id)
+        child_reminder_id = getattr(child, "reminder_id", None)
+        if child_reminder_id and (
+            self._reminder_record_name(child_reminder_id) != reminder_record_name
+        ):
+            raise ValueError(
+                f"{prefix} child {child_record_name} is linked to "
+                f"{self._reminder_record_name(child_reminder_id)}, not "
+                f"{reminder_record_name}"
+            )
 
         linked_ids = [
             _as_raw_id(x, prefix)
@@ -321,12 +330,11 @@ class RemindersWriteAPI:
         child_fields: Dict[str, Any] = {
             "Deleted": {"type": "INT64", "value": 1},
         }
-        reminder_id = getattr(child, "reminder_id", None)
-        if reminder_id:
+        if child_reminder_id:
             child_fields["Reminder"] = {
                 "type": "REFERENCE",
                 "value": {
-                    "recordName": self._reminder_record_name(reminder_id),
+                    "recordName": self._reminder_record_name(child_reminder_id),
                     "action": "VALIDATE",
                 },
             }

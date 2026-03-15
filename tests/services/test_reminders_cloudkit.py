@@ -1406,6 +1406,30 @@ class TestAdditionalWriteApis:
         assert delete_ops[1].record.fields["Deleted"].value == 1
         assert svc._raw.modify.call_args.kwargs["atomic"] is True
 
+    def test_delete_hashtag_rejects_mismatched_parent(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        reminder = Reminder(
+            id="Reminder/REM-TAG",
+            list_id="List/LIST-001",
+            title="Hashtag reminder",
+            record_change_tag="ctag-rem",
+            hashtag_ids=["TAG-1"],
+        )
+        hashtag = Hashtag(
+            id="Hashtag/TAG-1",
+            name="travel",
+            reminder_id="Reminder/OTHER-REMINDER",
+            record_change_tag="ctag-tag",
+        )
+
+        with pytest.raises(ValueError, match="Hashtag child"):
+            svc.delete_hashtag(reminder, hashtag)
+
+        svc._raw.modify.assert_not_called()
+        assert reminder.hashtag_ids == ["TAG-1"]
+
     def test_create_update_delete_url_attachment(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
@@ -1448,6 +1472,30 @@ class TestAdditionalWriteApis:
         delete_ops = svc._raw.modify.call_args.kwargs["operations"]
         assert len(delete_ops) == 2
         assert delete_ops[1].record.fields["Deleted"].value == 1
+
+    def test_delete_attachment_rejects_mismatched_parent(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        reminder = Reminder(
+            id="Reminder/REM-ATT",
+            list_id="List/LIST-001",
+            title="Attachment reminder",
+            record_change_tag="ctag-rem",
+            attachment_ids=["ATT-1"],
+        )
+        attachment = URLAttachment(
+            id="Attachment/ATT-1",
+            reminder_id="Reminder/OTHER-REMINDER",
+            url="https://example.com",
+            record_change_tag="ctag-att",
+        )
+
+        with pytest.raises(ValueError, match="Attachment child"):
+            svc.delete_attachment(reminder, attachment)
+
+        svc._raw.modify.assert_not_called()
+        assert reminder.attachment_ids == ["ATT-1"]
 
     def test_create_url_attachment_normalizes_shorthand_reminder_ids(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
@@ -1563,6 +1611,29 @@ class TestAdditionalWriteApis:
         delete_ops = svc._raw.modify.call_args.kwargs["operations"]
         assert len(delete_ops) == 2
         assert delete_ops[1].record.fields["Deleted"].value == 1
+
+    def test_delete_recurrence_rule_rejects_mismatched_parent(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        reminder = Reminder(
+            id="Reminder/REM-RR",
+            list_id="List/LIST-001",
+            title="Recurring reminder",
+            record_change_tag="ctag-rem",
+            recurrence_rule_ids=["RR-1"],
+        )
+        recurrence_rule = RecurrenceRule(
+            id="RecurrenceRule/RR-1",
+            reminder_id="Reminder/OTHER-REMINDER",
+            record_change_tag="ctag-rr",
+        )
+
+        with pytest.raises(ValueError, match="RecurrenceRule child"):
+            svc.delete_recurrence_rule(reminder, recurrence_rule)
+
+        svc._raw.modify.assert_not_called()
+        assert reminder.recurrence_rule_ids == ["RR-1"]
 
     def test_create_recurrence_rule_validates_before_modify(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
