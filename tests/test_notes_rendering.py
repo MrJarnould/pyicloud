@@ -85,7 +85,7 @@ class TestNoteRendering(unittest.TestCase):
         return rec
 
     def test_render_fixture_output(self):
-        """Ensure the captured test note renders to HTML without crashing."""
+        """Ensure the fixture note renders to HTML without crashing."""
         note_data = self.fixture["note"]
         note_rec = self._reconstruct_record(note_data)
 
