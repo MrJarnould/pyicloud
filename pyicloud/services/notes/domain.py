@@ -14,5 +14,5 @@ class AttachmentId(FrozenServiceModel):
 
 class NoteBody(FrozenServiceModel):
     bytes: bytes
-    text: Optional[str]
+    text: Optional[str] = None
     attachment_ids: List[AttachmentId] = Field(default_factory=list)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import html
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from tinyhtml import h
 
@@ -54,6 +55,37 @@ class AttachmentContext:
         return base
 
 
+def _safe_url(
+    url: Optional[str],
+    *,
+    allowed_schemes: set[str],
+) -> Optional[str]:
+    if not url:
+        return None
+
+    candidate = "".join(ch for ch in str(url).strip() if ch >= " " and ch != "\x7f")
+    if not candidate or candidate.startswith("//"):
+        return None
+
+    parts = urlsplit(candidate)
+    if not parts.scheme:
+        return candidate
+
+    scheme = parts.scheme.casefold()
+    if scheme not in allowed_schemes:
+        return None
+    if scheme in {"http", "https"} and not parts.netloc:
+        return None
+    if scheme in {"mailto", "tel"} and not (parts.path or parts.netloc):
+        return None
+    return candidate
+
+
+def _is_remote_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme.casefold() in {"http", "https"}
+
+
 class _Renderer:
     def render(
         self, ctx: AttachmentContext, render_note_cb: Callable
@@ -64,8 +96,10 @@ class _Renderer:
 class _DefaultRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         label = ctx.title or ctx.uti or "attachment"
-        # No URL available → omit href entirely for clarity
         extra = {"class": "attachment link"}
+        href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
+        if href:
+            extra["href"] = href
         if ctx.link_rel:
             extra["rel"] = ctx.link_rel
         if ctx.link_referrerpolicy:
@@ -84,6 +118,9 @@ class _TableRenderer(_Renderer):
         # Fallback to a link
         label = ctx.title or ctx.uti or "table"
         extra = {"class": "attachment link"}
+        href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
+        if href:
+            extra["href"] = href
         if ctx.link_rel:
             extra["rel"] = ctx.link_rel
         if ctx.link_referrerpolicy:
@@ -96,7 +133,11 @@ class _TableRenderer(_Renderer):
 class _UrlRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         title = ctx.title or ctx.uti or "link"
-        if ctx.primary_url:
+        href = _safe_url(
+            ctx.primary_url,
+            allowed_schemes={"http", "https", "mailto", "tel"},
+        )
+        if href:
             extra_link_attrs = {}
             if ctx.link_rel:
                 extra_link_attrs["rel"] = ctx.link_rel
@@ -108,7 +149,7 @@ class _UrlRenderer(_Renderer):
                 "a",
                 **ctx.base_attrs(
                     {
-                        "href": ctx.primary_url,
+                        "href": href,
                         "class": "attachment link",
                         **extra_link_attrs,
                     }
@@ -126,7 +167,10 @@ class _UrlRenderer(_Renderer):
 
 class _ImageRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
-        url = ctx.primary_url or ctx.thumb_url
+        url = _safe_url(
+            ctx.primary_url or ctx.thumb_url,
+            allowed_schemes={"http", "https"},
+        )
         alt = ctx.title or ctx.uti or "image"
         if url:
             # Add responsive sizing so large images don't overflow the viewport
@@ -145,10 +189,9 @@ class _ImageRenderer(_Renderer):
 
 class _AudioRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
-        if ctx.primary_url:
-            attrs = ctx.base_attrs(
-                {"src": ctx.primary_url, "class": "attachment audio"}
-            )
+        url = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
+        if url:
+            attrs = ctx.base_attrs({"src": url, "class": "attachment audio"})
             attr_html = " ".join(f'{k}="{html.escape(v)}"' for k, v in attrs.items())
             return f"<audio controls {attr_html}></audio>"
         title = ctx.title or ctx.uti or "audio"
@@ -157,10 +200,11 @@ class _AudioRenderer(_Renderer):
 
 class _VideoRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
-        if ctx.primary_url:
+        url = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
+        if url:
             attrs = ctx.base_attrs(
                 {
-                    "src": ctx.primary_url,
+                    "src": url,
                     "class": "attachment video",
                     "controls": "controls",
                     "style": "max-width:100%;height:auto",
@@ -175,10 +219,10 @@ class _VideoRenderer(_Renderer):
 class _PdfRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         title = ctx.title or "PDF"
-        url = ctx.primary_url
+        url = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
         if url:
             # Only embed local PDFs. Remote CloudKit URLs often force downloads and break UX.
-            is_remote = url.startswith("http://") or url.startswith("https://")
+            is_remote = _is_remote_url(url)
             if not is_remote:
                 height_px = (
                     ctx.pdf_object_height
@@ -229,7 +273,8 @@ class _PdfRenderer(_Renderer):
 class _VCardRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         title = ctx.title or "contact"
-        if ctx.primary_url:
+        href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
+        if href:
             extra_link_attrs = {}
             if ctx.link_rel:
                 extra_link_attrs["rel"] = ctx.link_rel
@@ -241,7 +286,7 @@ class _VCardRenderer(_Renderer):
                 "a",
                 **ctx.base_attrs(
                     {
-                        "href": ctx.primary_url,
+                        "href": href,
                         "class": "attachment contact",
                         **extra_link_attrs,
                     }

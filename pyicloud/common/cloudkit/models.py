@@ -39,16 +39,20 @@ SENTINEL_ZERO_MS: set[int] = {
 
 
 def _from_millis_or_none(v):
-    # Accept int/float or digit-only str; be strict about being milliseconds.
+    # Accept int/float or signed numeric strings; be strict about milliseconds.
     if isinstance(v, (int, float)):
         iv = int(v)
-    elif isinstance(v, str) and v.isdigit():
-        iv = int(v)
-    elif isinstance(v, str) and v.startswith("0001-01-01"):
-        # ISO-like sentinel for year 1 -> treat as None
-        return None
+    elif isinstance(v, str):
+        sv = v.strip()
+        if sv.startswith("0001-01-01"):
+            # ISO-like sentinel for year 1 -> treat as None
+            return None
+        try:
+            iv = int(sv)
+        except (TypeError, ValueError, OverflowError):
+            return None
     else:
-        raise TypeError("Expected milliseconds since epoch as int or digit string")
+        raise TypeError("Expected milliseconds since epoch as int or numeric string")
     # Coerce sentinels and anything older than canonical MIN to None
     if iv in SENTINEL_ZERO_MS or iv <= CANONICAL_MIN_MS:
         return None
@@ -98,15 +102,21 @@ MillisDateTimeOrNone = Annotated[
 def _from_secs_or_millis(v):
     if isinstance(v, (int, float)):
         iv = int(v)
-    elif isinstance(v, str) and v.isdigit():
-        iv = int(v)
+    elif isinstance(v, str):
+        try:
+            iv = int(v.strip())
+        except (TypeError, ValueError, OverflowError):
+            return None
     else:
         raise TypeError("Expected seconds or milliseconds since epoch as int/str")
-    # Heuristic: values < 1e11 are seconds (covers dates up to ~5138 CE)
-    if abs(iv) < 100_000_000_000:
-        return datetime.fromtimestamp(iv, tz=timezone.utc)
-    # Otherwise treat as milliseconds
-    return datetime.fromtimestamp(iv / 1000.0, tz=timezone.utc)
+    try:
+        # Heuristic: values < 1e11 are seconds (covers dates up to ~5138 CE)
+        if abs(iv) < 100_000_000_000:
+            return datetime.fromtimestamp(iv, tz=timezone.utc)
+        # Otherwise treat as milliseconds
+        return datetime.fromtimestamp(iv / 1000.0, tz=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None
 
 
 def _to_secs(dt: datetime) -> int:

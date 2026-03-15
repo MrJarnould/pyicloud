@@ -937,15 +937,18 @@ class PyiCloudService:
     def reminders(self) -> RemindersService:
         """Gets the 'Reminders' service."""
         if not self._reminders:
-            service_root: str = self.get_webservice_url("ckdatabasews")
             try:
+                service_root: str = self.get_webservice_url("ckdatabasews")
                 self._reminders = RemindersService(
                     service_root=service_root,
                     session=self.session,
                     params=self.params,
                     cloudkit_validation_extra=self._cloudkit_validation_extra,
                 )
-            except (PyiCloudAPIResponseException,) as error:
+            except (
+                PyiCloudAPIResponseException,
+                PyiCloudServiceNotActivatedException,
+            ) as error:
                 raise PyiCloudServiceUnavailable(
                     "Reminders service not available"
                 ) from error
@@ -982,7 +985,10 @@ class PyiCloudService:
                     params=self.params,
                     cloudkit_validation_extra=self._cloudkit_validation_extra,
                 )
-            except (PyiCloudAPIResponseException,) as error:
+            except (
+                PyiCloudAPIResponseException,
+                PyiCloudServiceNotActivatedException,
+            ) as error:
                 raise PyiCloudServiceUnavailable(
                     "Notes service not available"
                 ) from error

@@ -185,7 +185,7 @@ class RemindersWriteAPI:
         modify_response = self._get_raw().modify(
             operations=[reminder_op, child_op],
             zone_id=_REMINDERS_ZONE_REQ,
-            atomic=False,
+            atomic=True,
         )
         _assert_modify_success(modify_response, operation_name)
 
@@ -244,7 +244,7 @@ class RemindersWriteAPI:
         modify_response = self._get_raw().modify(
             operations=[reminder_op, child_op],
             zone_id=_REMINDERS_ZONE_REQ,
-            atomic=False,
+            atomic=True,
         )
         _assert_modify_success(modify_response, operation_name)
 
@@ -324,7 +324,10 @@ class RemindersWriteAPI:
         if parent_reminder_id:
             record_fields["ParentReminder"] = {
                 "type": "REFERENCE",
-                "value": {"recordName": parent_reminder_id, "action": "VALIDATE"},
+                "value": {
+                    "recordName": _as_record_name(parent_reminder_id, "Reminder"),
+                    "action": "VALIDATE",
+                },
             }
 
         op = CKModifyOperation(
@@ -349,16 +352,55 @@ class RemindersWriteAPI:
         """Update an existing reminder."""
         title_doc = _encode_crdt_document(reminder.title)
         notes_doc = _encode_crdt_document(reminder.desc or "")
+        now_ms = int(time.time() * 1000)
 
-        fields_mod = ["titleDocument", "notesDocument", "completed", "lastModifiedDate"]
-        token_map = _generate_resolution_token_map(fields_mod)
+        fields_mod = [
+            "titleDocument",
+            "notesDocument",
+            "completed",
+            "priority",
+            "flagged",
+            "allDay",
+            "lastModifiedDate",
+        ]
 
         fields: dict[str, Any] = {
             "TitleDocument": {"type": "STRING", "value": title_doc},
             "NotesDocument": {"type": "STRING", "value": notes_doc},
             "Completed": {"type": "INT64", "value": 1 if reminder.completed else 0},
-            "ResolutionTokenMap": {"type": "STRING", "value": token_map},
-            "LastModifiedDate": {"type": "TIMESTAMP", "value": int(time.time() * 1000)},
+            "Priority": {"type": "INT64", "value": reminder.priority},
+            "Flagged": {"type": "INT64", "value": 1 if reminder.flagged else 0},
+            "AllDay": {"type": "INT64", "value": 1 if reminder.all_day else 0},
+            "LastModifiedDate": {"type": "TIMESTAMP", "value": now_ms},
+        }
+        if reminder.due_date is not None:
+            due_date = reminder.due_date
+            if due_date.tzinfo is None:
+                due_date = due_date.replace(tzinfo=timezone.utc)
+                reminder.due_date = due_date
+            fields["DueDate"] = {
+                "type": "TIMESTAMP",
+                "value": int(due_date.timestamp() * 1000),
+            }
+            fields_mod.append("dueDate")
+        if reminder.time_zone:
+            fields["TimeZone"] = {"type": "STRING", "value": reminder.time_zone}
+            fields_mod.append("timeZone")
+        if reminder.parent_reminder_id:
+            fields["ParentReminder"] = {
+                "type": "REFERENCE",
+                "value": {
+                    "recordName": _as_record_name(
+                        reminder.parent_reminder_id,
+                        "Reminder",
+                    ),
+                    "action": "VALIDATE",
+                },
+            }
+            fields_mod.append("parentReminder")
+        fields["ResolutionTokenMap"] = {
+            "type": "STRING",
+            "value": _generate_resolution_token_map(fields_mod),
         }
 
         self._submit_single_record_update(
@@ -369,6 +411,7 @@ class RemindersWriteAPI:
             fields=fields,
             model_obj=reminder,
         )
+        reminder.modified = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
 
     def delete(self, reminder: Reminder) -> None:
         """Delete a reminder using soft-update (Deleted: 1)."""
@@ -503,7 +546,7 @@ class RemindersWriteAPI:
         modify_response = self._get_raw().modify(
             operations=[reminder_op, alarm_op, trigger_op],
             zone_id=_REMINDERS_ZONE_REQ,
-            atomic=False,
+            atomic=True,
         )
         _assert_modify_success(modify_response, "Add location trigger")
 

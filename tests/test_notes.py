@@ -2,6 +2,7 @@
 
 import importlib
 import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -15,9 +16,20 @@ from pyicloud.common.cloudkit.models import (
     CKPCSInfo,
     CKRecord,
     CKUserIdentity,
+    _from_millis_or_none,
+    _from_secs_or_millis,
 )
 from pyicloud.services.notes import AttachmentId, Note, NotesService, NoteSummary
-from pyicloud.services.notes.client import CloudKitNotesClient, NotesApiError
+from pyicloud.services.notes.client import (
+    CloudKitNotesClient,
+    NotesApiError,
+)
+from pyicloud.services.notes.client import NotesError as ClientNotesError
+from pyicloud.services.notes.client import (
+    _CloudKitClient,
+)
+from pyicloud.services.notes.rendering.exporter import decode_and_parse_note, write_html
+from pyicloud.services.notes.service import NoteNotFound
 
 
 class NotesServiceTest(unittest.TestCase):
@@ -33,8 +45,7 @@ class NotesServiceTest(unittest.TestCase):
 
     def test_get_note(self):
         """Test getting a note."""
-        # This test will be implemented once sample data is available.
-        pass
+        self.skipTest("TODO: implement once representative note fixture is available")
 
     def test_notes_domain_models_are_pydantic(self):
         """Notes public models expose Pydantic serialization."""
@@ -123,6 +134,26 @@ class NotesServiceTest(unittest.TestCase):
         self.assertIsInstance(response, CKLookupResponse)
         self.assertEqual(response.model_extra["unexpectedTopLevel"], {"present": True})
 
+    def test_notes_client_uses_bounded_timeouts(self):
+        session = MagicMock()
+        session.post.return_value = MagicMock(status_code=200, json=lambda: {})
+        session.get.return_value = MagicMock(
+            status_code=200, iter_content=lambda **_: []
+        )
+        client = _CloudKitClient("https://example.com", session, {})
+
+        client.post("/records/query", {"query": "payload"})
+        list(client.get_stream("https://example.com/asset"))
+
+        self.assertEqual(session.post.call_args.kwargs["timeout"], (10.0, 60.0))
+        self.assertEqual(session.get.call_args.kwargs["timeout"], (10.0, 60.0))
+
+    def test_notes_client_redacts_query_strings_in_logs(self):
+        redacted = _CloudKitClient._redact_url(
+            "https://example.com/path?token=secret&x=1#frag"
+        )
+        self.assertEqual(redacted, "https://example.com/path")
+
     def test_notes_client_strict_mode_wraps_validation_error(self):
         session = MagicMock()
         payload = {"records": [], "unexpectedTopLevel": {"present": True}}
@@ -170,6 +201,9 @@ class NotesServiceTest(unittest.TestCase):
 
         self.assertEqual(service.raw._validation_extra, "ignore")
 
+    def test_notes_errors_share_client_base_class(self):
+        self.assertTrue(issubclass(NoteNotFound, ClientNotesError))
+
     def test_notes_exporter_module_imports(self):
         module = importlib.import_module("pyicloud.services.notes.rendering.exporter")
 
@@ -205,18 +239,123 @@ class NotesServiceTest(unittest.TestCase):
             {"recordName": "Note/1", "recordType": "Note", "fields": {}}
         )
         self.service.raw.lookup = MagicMock(return_value=MagicMock(records=[record]))
-        output_path = "/tmp/python-test-results/notes-export/note.html"
+        output_dir = os.path.join(
+            tempfile.gettempdir(),
+            "python-test-results",
+            "notes-export",
+        )
+        output_path = os.path.join(output_dir, "note.html")
 
         with patch(
             "pyicloud.services.notes.rendering.exporter.NoteExporter.export",
             return_value=output_path,
         ) as mock_export:
-            exported = self.service.export_note(
-                "Note/1", "/tmp/python-test-results/notes-export"
-            )
+            exported = self.service.export_note("Note/1", output_dir)
 
         self.assertEqual(exported, output_path)
         mock_export.assert_called_once()
+
+    def test_notes_service_attachment_lookup_prefers_canonical_record_names(self):
+        note_record = CKRecord.model_validate(
+            {
+                "recordName": "Note/1",
+                "recordType": "Note",
+                "fields": {
+                    "Attachments": {
+                        "type": "REFERENCE_LIST",
+                        "value": [
+                            {
+                                "recordName": "Attachment/CANONICAL",
+                                "action": "VALIDATE",
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+        attachment_record = CKRecord.model_validate(
+            {
+                "recordName": "Attachment/CANONICAL",
+                "recordType": "Attachment",
+                "fields": {
+                    "AttachmentIdentifier": {"type": "STRING", "value": "ALIAS-1"},
+                    "AttachmentUTI": {"type": "STRING", "value": "public.url"},
+                    "PrimaryAsset": {
+                        "type": "ASSETID",
+                        "value": {"downloadURL": "https://example.com/file"},
+                    },
+                },
+            }
+        )
+        self.service.raw.lookup = MagicMock(
+            return_value=CKLookupResponse(records=[attachment_record])
+        )
+
+        attachments = self.service._resolve_attachments_for_record(
+            note_record,
+            attachment_ids=[AttachmentId(identifier="ALIAS-1")],
+        )
+
+        self.assertEqual(
+            self.service.raw.lookup.call_args.args[0],
+            ["Attachment/CANONICAL"],
+        )
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].id, "Attachment/CANONICAL")
+        self.assertIs(self.service._attachment_meta_cache["ALIAS-1"], attachments[0])
+
+    def test_write_html_rejects_filename_escape(self):
+        out_dir = os.path.join(
+            tempfile.gettempdir(),
+            "python-test-results",
+            "notes-export-write-html",
+        )
+        with self.assertRaisesRegex(ValueError, "filename must stay within out_dir"):
+            write_html(
+                "Title",
+                "<p>rendered</p>",
+                out_dir,
+                filename="../escape.html",
+            )
+
+    def test_decode_and_parse_note_returns_none_on_parse_failure(self):
+        record = CKRecord.model_validate(
+            {
+                "recordName": "Note/1",
+                "recordType": "Note",
+                "fields": {
+                    "TextDataEncrypted": {
+                        "type": "ENCRYPTED_BYTES",
+                        "value": "aGVsbG8=",
+                    }
+                },
+            }
+        )
+
+        with (
+            patch(
+                "pyicloud.services.notes.rendering.exporter.BodyDecoder.decode",
+                return_value=MagicMock(bytes=b"broken"),
+            ),
+            patch(
+                "pyicloud.services.notes.rendering.exporter.pb.NoteStoreProto.ParseFromString",
+                side_effect=ValueError("bad proto"),
+            ),
+        ):
+            self.assertIsNone(decode_and_parse_note(record))
+
+    def test_note_body_text_defaults_to_none(self):
+        from pyicloud.services.notes.domain import NoteBody
+
+        body = NoteBody(bytes=b"hello")
+        self.assertIsNone(body.text)
+
+    def test_shared_cloudkit_signed_string_timestamps_are_tolerated(self):
+        created = _from_millis_or_none(" 1735689600000 ")
+
+        self.assertIsNotNone(created)
+        self.assertEqual(created.isoformat(), "2025-01-01T00:00:00+00:00")
+        self.assertIsNone(_from_secs_or_millis("999999999999999999999999"))
 
     def test_shared_cloudkit_share_allows_encrypted_string_fields(self):
         """Shared cloudkit.share records may expose STRING + isEncrypted fields."""

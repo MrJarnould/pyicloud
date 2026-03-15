@@ -1,7 +1,7 @@
 """Developer utility for searching, inspecting, and exporting iCloud Notes.
 
 Run:
-    uv run python examples/notes_cli.py --username you@example.com [--password ...]
+    uv run python examples/notes_cli.py --username you@example.com ...
 
 This script is built on top of ``api.notes`` for local exploration and export
 workflows. It is useful for debugging note selection, rendering, and HTML
@@ -39,12 +39,6 @@ def parse_args() -> argparse.Namespace:
         description="Developer utility for exploring and exporting iCloud Notes"
     )
     p.add_argument("--username", dest="username", required=True, help="Apple ID")
-    p.add_argument(
-        "--password",
-        dest="password",
-        default="",
-        help="Apple ID password (optional; keyring if omitted)",
-    )
     p.add_argument(
         "--verbose",
         dest="verbose",
@@ -216,7 +210,7 @@ def main() -> None:
         )
 
     phase("bootstrap: starting authentication")
-    pw = args.password or get_password(args.username)
+    pw = get_password(args.username)
     api = PyiCloudService(
         apple_id=args.username,
         password=pw,
@@ -308,8 +302,9 @@ def main() -> None:
 
     for idx, item in enumerate(candidates):
         phase(f"note[{idx}]: start '{(item.title or 'untitled')}'")
-        console.rule(f"idx: {idx}")
-        console.print(item, end="\n\n")
+        if args.verbose or args.notes_debug:
+            console.rule(f"idx: {idx}")
+            console.print(item, end="\n\n")
 
         ck = notes.raw
         phase(f"note[{idx}]: ck.lookup(TextDataEncrypted,Attachments,TitleEncrypted)")
@@ -329,8 +324,9 @@ def main() -> None:
         phase(f"note[{idx}]: decode+parse start")
         proto_note = decode_and_parse_note(note_rec)
         phase(f"note[{idx}]: decode+parse ok")
-        console.print("proto_note:")
-        console.print(proto_note, end="\n\n")
+        if args.notes_debug:
+            console.print("proto_note:")
+            console.print(proto_note, end="\n\n")
 
         from pyicloud.services.notes.rendering.exporter import NoteExporter
 

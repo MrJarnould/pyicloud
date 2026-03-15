@@ -1,20 +1,23 @@
 import json
 import os
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 from pyicloud.services.notes.rendering.attachments import (
     AttachmentContext,
+    _safe_url,
     render_attachment,
 )
 from pyicloud.services.notes.rendering.ck_datasource import CloudKitNoteDataSource
 from pyicloud.services.notes.rendering.exporter import (
     NoteExporter,
+    decode_and_parse_note,
     download_image_assets,
 )
 from pyicloud.services.notes.rendering.options import ExportConfig
-from pyicloud.services.notes.rendering.renderer import NoteRenderer
+from pyicloud.services.notes.rendering.renderer import NoteRenderer, _safe_anchor_href
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "note_fixture.json")
 with open(FIXTURE_PATH, "r", encoding="utf-8") as fixture_file:
@@ -81,16 +84,6 @@ class TestNoteRendering(unittest.TestCase):
         """Ensure the captured test note renders to HTML without crashing."""
         note_data = self.fixture["note"]
         note_rec = self._reconstruct_record(note_data)
-
-        # Patch CKRecord in exporter so isinstance(mock, CKRecord) passes
-        with unittest.mock.patch(
-            "pyicloud.services.notes.rendering.exporter.CKRecord", autospec=True
-        ) as MockCKRecord:
-            # We need note_rec to be an instance of this patched class
-            MockCKRecord.return_value = note_rec
-            # Actually, isinstance(byte_obj, MockClass) works if we set __class__ maybe?
-            # Easier: just bypass decode_and_parse_note manually since we are testing rendering, not decoding validation.
-            pass
 
         # Manual decode to skip isinstance check causing issues with simple mocks
         from pyicloud.services.notes.decoding import BodyDecoder
@@ -187,13 +180,106 @@ class TestNoteRendering(unittest.TestCase):
         self.assertIn(f'src="{signed_url}"', html)
         self.assertNotIn(f'alt="{signed_url}"', html)
 
+    def test_default_renderer_keeps_safe_relative_href(self):
+        html = render_attachment(
+            AttachmentContext(
+                id="att-1",
+                uti="com.example.unknown",
+                title="Attachment",
+                primary_url="assets/note/file.bin",
+                thumb_url=None,
+                mergeable_gz=None,
+            ),
+            lambda _: "",
+        )
+
+        self.assertIn('href="assets/note/file.bin"', html)
+
+    def test_url_renderer_rejects_unsafe_schemes(self):
+        html = render_attachment(
+            AttachmentContext(
+                id="att-2",
+                uti="public.url",
+                title="Unsafe",
+                primary_url="javascript:alert(1)",
+                thumb_url=None,
+                mergeable_gz=None,
+            ),
+            lambda _: "",
+        )
+
+        self.assertNotIn("javascript:alert", html)
+        self.assertNotIn("href=", html)
+
+    def test_image_renderer_rejects_protocol_relative_urls(self):
+        html = render_attachment(
+            AttachmentContext(
+                id="att-3",
+                uti="public.image",
+                title="Image",
+                primary_url="//evil.example.com/x.png",
+                thumb_url=None,
+                mergeable_gz=None,
+            ),
+            lambda _: "",
+        )
+
+        self.assertNotIn("src=", html)
+
+    def test_safe_anchor_href_allows_only_expected_schemes(self):
+        self.assertEqual(
+            _safe_anchor_href("https://example.com"), "https://example.com"
+        )
+        self.assertEqual(
+            _safe_anchor_href("mailto:test@example.com"), "mailto:test@example.com"
+        )
+        self.assertEqual(_safe_anchor_href("tel:+352123456"), "tel:+352123456")
+        self.assertIsNone(_safe_anchor_href("javascript:alert(1)"))
+        self.assertIsNone(_safe_anchor_href("data:text/html,hi"))
+
+    def test_safe_url_rejects_unsafe_and_protocol_relative_urls(self):
+        self.assertEqual(
+            _safe_url(" https://example.com/file ", allowed_schemes={"http", "https"}),
+            "https://example.com/file",
+        )
+        self.assertEqual(
+            _safe_url("assets/file.png", allowed_schemes={"http", "https"}),
+            "assets/file.png",
+        )
+        self.assertIsNone(
+            _safe_url("//evil.example.com/file.png", allowed_schemes={"http", "https"})
+        )
+        self.assertIsNone(
+            _safe_url("javascript:alert(1)", allowed_schemes={"http", "https"})
+        )
+
+    def test_export_config_is_image_uti_normalizes_config_values(self):
+        config = ExportConfig(
+            image_uti_prefixes=("Public.Image",),
+            image_uti_exacts=("Com.Apple.Paper",),
+        )
+
+        self.assertTrue(config.is_image_uti("public.image"))
+        self.assertTrue(config.is_image_uti("com.apple.paper"))
+
+    def test_export_config_is_image_uti_rejects_invalid_config_types(self):
+        config = ExportConfig(image_uti_exacts=("public.jpeg", 123))
+
+        with self.assertRaises(TypeError):
+            config.is_image_uti("public.jpeg")
+
 
 class TestNoteExporter(unittest.TestCase):
     def _note_record(self, record_name="note-1", title=b"Example Title"):
         return _Record(record_name, {"TitleEncrypted": title})
 
     def _output_dir(self, name):
-        path = os.path.join("/tmp/python-test-results", "notes-rendering", name)
+        path = os.path.join(
+            tempfile.gettempdir(),
+            "python-test-results",
+            "notes-rendering",
+            name,
+        )
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -204,7 +290,10 @@ class TestNoteExporter(unittest.TestCase):
         config = ExportConfig(
             export_mode="archival",
             assets_dir=os.path.join(
-                "/tmp/python-test-results", "notes-rendering", "shared-assets"
+                tempfile.gettempdir(),
+                "python-test-results",
+                "notes-rendering",
+                "shared-assets",
             ),
         )
         exporter = NoteExporter(client, config=config)
@@ -294,6 +383,9 @@ class TestNoteExporter(unittest.TestCase):
         mock_av.assert_not_called()
         mock_vcard.assert_not_called()
         self.assertEqual(html, "<p>rendered</p>")
+
+    def test_decode_and_parse_note_returns_none_for_invalid_record_type(self):
+        self.assertIsNone(decode_and_parse_note(object()))
 
     def test_download_image_assets_uses_caller_config(self):
         ck_client = MagicMock()

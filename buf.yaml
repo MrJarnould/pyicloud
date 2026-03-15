@@ -1,0 +1,10 @@
+version: v1
+
+lint:
+  use:
+    - DEFAULT
+  ignore_only:
+    PACKAGE_DIRECTORY_MATCH:
+      - pyicloud/services/notes/protobuf/notes.proto
+      - pyicloud/services/reminders/protobuf/reminders.proto
+      - pyicloud/services/reminders/protobuf/versioned_document.proto

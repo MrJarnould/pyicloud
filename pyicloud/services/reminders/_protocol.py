@@ -87,7 +87,10 @@ def _decode_crdt_document(encrypted_value: str | bytes) -> str:
         padding = 4 - (len(data) % 4)
         if padding != 4:
             data += "=" * padding
-        data = base64.b64decode(data)
+        try:
+            data = base64.b64decode(data)
+        except (binascii.Error, ValueError):
+            return ""
 
     try:
         data = zlib.decompress(data)

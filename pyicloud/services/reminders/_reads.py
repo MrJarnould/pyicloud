@@ -174,20 +174,21 @@ class RemindersReadAPI:
 
     def get(self, reminder_id: str) -> Reminder:
         """Fetch a single reminder by ID."""
+        record_name = _as_record_name(reminder_id, "Reminder")
         resp = self._get_raw().lookup(
-            record_names=[reminder_id],
+            record_names=[record_name],
             zone_id=_REMINDERS_ZONE_REQ,
         )
         _assert_read_success(resp.records, "Lookup reminder")
 
         target = None
         for rec in resp.records:
-            if isinstance(rec, CKRecord) and rec.recordName == reminder_id:
+            if isinstance(rec, CKRecord) and rec.recordName == record_name:
                 target = rec
                 break
 
         if not target:
-            raise LookupError(f"Reminder not found: {reminder_id}")
+            raise LookupError(f"Reminder not found: {record_name}")
 
         return self._mapper.record_to_reminder(target)
 
@@ -407,7 +408,9 @@ class RemindersReadAPI:
                 alarms.append(alarm)
 
         trigger_ids = [
-            f"AlarmTrigger/{alarm.trigger_id}" for alarm in alarms if alarm.trigger_id
+            _as_record_name(alarm.trigger_id, "AlarmTrigger")
+            for alarm in alarms
+            if alarm.trigger_id
         ]
         trigger_map = {}
         if trigger_ids:
@@ -420,11 +423,17 @@ class RemindersReadAPI:
                 if isinstance(rec, CKRecord) and rec.recordType == "AlarmTrigger":
                     trigger = self._mapper.record_to_alarm_trigger(rec)
                     if trigger:
-                        trigger_map[trigger.id] = trigger
+                        trigger_map[_as_record_name(trigger.id, "AlarmTrigger")] = (
+                            trigger
+                        )
         return [
             AlarmWithTrigger(
                 alarm=alarm,
-                trigger=trigger_map.get(f"AlarmTrigger/{alarm.trigger_id}"),
+                trigger=(
+                    trigger_map.get(_as_record_name(alarm.trigger_id, "AlarmTrigger"))
+                    if alarm.trigger_id
+                    else None
+                ),
             )
             for alarm in alarms
         ]

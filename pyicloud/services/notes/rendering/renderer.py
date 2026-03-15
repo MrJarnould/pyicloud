@@ -10,6 +10,7 @@ import html
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import List, Optional, Tuple, cast
+from urllib.parse import urlsplit
 
 from ..protobuf import notes_pb2 as pb
 from .attachments import AttachmentContext, render_attachment
@@ -37,6 +38,25 @@ def _is_list_style(st: Optional[int]) -> bool:
         StyleType.NUMBERED_LIST,
         StyleType.CHECKBOX,
     )
+
+
+def _safe_anchor_href(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+
+    candidate = "".join(ch for ch in str(url).strip() if ch >= " " and ch != "\x7f")
+    if not candidate:
+        return None
+
+    parts = urlsplit(candidate)
+    scheme = parts.scheme.casefold()
+    if scheme not in {"http", "https", "mailto", "tel"}:
+        return None
+    if scheme in {"http", "https"} and not parts.netloc:
+        return None
+    if scheme in {"mailto", "tel"} and not (parts.path or parts.netloc):
+        return None
+    return candidate
 
 
 _FONT_STACKS = {
@@ -554,7 +574,8 @@ def render_note_fragment(
             styled = f"<span style='{style_attr}'>{html_text}</span>"
         else:
             styled = html_text
-        if sig.link:
+        safe_href = _safe_anchor_href(sig.link)
+        if safe_href:
             rel = "noopener noreferrer"
             rp = "no-referrer"
             try:
@@ -564,7 +585,7 @@ def render_note_fragment(
                     rp = str(config.referrer_policy)
             except Exception:
                 pass
-            styled = f'<a href="{html.escape(sig.link)}" target="_blank" rel="{html.escape(rel)}" referrerpolicy="{html.escape(rp)}">{styled}</a>'
+            styled = f'<a href="{html.escape(safe_href)}" target="_blank" rel="{html.escape(rel)}" referrerpolicy="{html.escape(rp)}">{styled}</a>'
         if sig.superscript == 1:
             styled = f"<sup>{styled}</sup>"
         elif sig.superscript == -1:
@@ -687,8 +708,7 @@ def render_note_fragment(
                                         list_stack[-1]["li_open"] = False
 
                                         # Open new standard item
-                                        raw_tag = list_stack[-1]["tag"]
-                                        fragments.append(f"<{raw_tag}>")
+                                        fragments.append("<li>")
                                         list_stack[-1]["li_open"] = True
                                         list_stack[-1]["li_index"] = len(fragments) - 1
                                         list_stack[-1]["li_has_content"] = False
@@ -801,8 +821,7 @@ def render_note_fragment(
                             fragments.append("</li>")
                             list_stack[-1]["li_open"] = False
                             # Open new standard item
-                            tag_name = list_stack[-1]["tag"]
-                            fragments.append(f"<{tag_name}>")
+                            fragments.append("<li>")
                             list_stack[-1]["li_open"] = True
                             list_stack[-1]["li_index"] = len(fragments) - 1
                             list_stack[-1]["li_has_content"] = False

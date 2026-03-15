@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from typing import Dict, Iterable, Iterator, List, Optional, TypeVar
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import ValidationError
 
@@ -35,6 +36,7 @@ from pyicloud.common.cloudkit import (
 
 LOGGER = logging.getLogger(__name__)
 _ResponseModelT = TypeVar("_ResponseModelT")
+DEFAULT_TIMEOUT = (10.0, 60.0)
 
 
 # ------------------------------- Errors --------------------------------------
@@ -75,10 +77,18 @@ class _CloudKitClient:
       - Bounded debug dumps (PYICLOUD_DEBUG_MAX_BYTES)
     """
 
-    def __init__(self, base_url: str, session, base_params: Dict[str, object]):
+    def __init__(
+        self,
+        base_url: str,
+        session,
+        base_params: Dict[str, object],
+        *,
+        timeout: tuple[float, float] = DEFAULT_TIMEOUT,
+    ):
         self._base_url = base_url.rstrip("/")
         self._session = session
         self._params = self._normalize_params(base_params or {})
+        self._timeout = timeout
         LOGGER.debug("Initialized _CloudKitClient with base_url: %s", self._base_url)
 
     @staticmethod
@@ -97,16 +107,24 @@ class _CloudKitClient:
         q = urlencode(self._params)
         return f"{self._base_url}{path}" + (f"?{q}" if q else "")
 
+    @staticmethod
+    def _redact_url(url: str) -> str:
+        parts = urlsplit(url)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
     def post(self, path: str, payload: Dict) -> Dict:
         url = self._build_url(path)
-        LOGGER.info("POST to %s", url)
-        resp = self._session.post(url, json=payload)
+        redacted_url = self._redact_url(url)
+        LOGGER.info("POST to %s", redacted_url)
+        resp = self._session.post(url, json=payload, timeout=self._timeout)
         code = getattr(resp, "status_code", 0)
-        LOGGER.debug("POST to %s returned status %d", url, code)
+        LOGGER.debug("POST to %s returned status %d", redacted_url, code)
         if code >= 400:
             self._dump_http_debug(path.strip("/"), url, payload, resp)
             if code in (401, 403):
-                LOGGER.error("POST to %s failed with auth error: %d", url, code)
+                LOGGER.error(
+                    "POST to %s failed with auth error: %d", redacted_url, code
+                )
                 raise NotesAuthError(f"HTTP {code}: unauthorized")
             if code == 429:
                 retry_after = None
@@ -117,7 +135,9 @@ class _CloudKitClient:
                 except Exception:
                     retry_after = None
                 LOGGER.warning(
-                    "POST to %s was rate-limited. Retry after: %s", url, retry_after
+                    "POST to %s was rate-limited. Retry after: %s",
+                    redacted_url,
+                    retry_after,
                 )
                 raise NotesRateLimited(
                     "HTTP 429: rate limited", retry_after=retry_after
@@ -127,15 +147,15 @@ class _CloudKitClient:
                 body = resp.json()
             except Exception:
                 body = getattr(resp, "text", None)
-            LOGGER.error("POST to %s failed with code %d", url, code)
+            LOGGER.error("POST to %s failed with code %d", redacted_url, code)
             raise NotesApiError(f"HTTP {code}", payload=body)
         try:
             json_response = resp.json()
-            LOGGER.debug("Successfully parsed JSON response from %s", url)
+            LOGGER.debug("Successfully parsed JSON response from %s", redacted_url)
             return json_response
         except Exception:
             self._dump_http_debug(path.strip("/"), url, payload, resp)
-            LOGGER.error("Failed to parse JSON response from %s", url)
+            LOGGER.error("Failed to parse JSON response from %s", redacted_url)
             raise NotesApiError(
                 "Invalid JSON response", payload=getattr(resp, "text", None)
             )
@@ -182,12 +202,13 @@ class _CloudKitClient:
 
     # Simple helpers for assets (streaming GET)
     def get_stream(self, url: str, chunk_size: int = 65536) -> Iterator[bytes]:
-        LOGGER.info("GET stream from %s", url)
-        resp = self._session.get(url, stream=True)
+        redacted_url = self._redact_url(url)
+        LOGGER.info("GET stream from %s", redacted_url)
+        resp = self._session.get(url, stream=True, timeout=self._timeout)
         code = getattr(resp, "status_code", 0)
         if code >= 400:
             self._dump_http_debug("asset_get", url, {}, resp)
-            LOGGER.error("GET stream from %s failed with code %d", url, code)
+            LOGGER.error("GET stream from %s failed with code %d", redacted_url, code)
             raise NotesApiError(
                 f"HTTP {code} on asset GET", payload=getattr(resp, "text", None)
             )
@@ -216,8 +237,14 @@ class CloudKitNotesClient:
         base_params: Dict[str, object],
         *,
         validation_extra: CloudKitExtraMode | None = None,
+        timeout: tuple[float, float] = DEFAULT_TIMEOUT,
     ):
-        self._http = _CloudKitClient(base_url, session, base_params)
+        self._http = _CloudKitClient(
+            base_url,
+            session,
+            base_params,
+            timeout=timeout,
+        )
         self._validation_extra = validation_extra
         LOGGER.info("CloudKitNotesClient initialized.")
 
@@ -342,7 +369,11 @@ class CloudKitNotesClient:
         import os
         import uuid
 
-        LOGGER.info("Downloading asset from %s to directory %s", url, directory)
+        LOGGER.info(
+            "Downloading asset from %s to directory %s",
+            self._http._redact_url(url),
+            directory,
+        )
         os.makedirs(directory, exist_ok=True)
         fname = f"icloud-asset-{uuid.uuid4().hex}"
         path = os.path.join(directory, fname)

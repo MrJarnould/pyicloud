@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-// No package declared in the original; keeping that as-is.
+package notes;
 
 // ===============================
 // Common classes used across types

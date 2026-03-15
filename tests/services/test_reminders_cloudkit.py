@@ -351,6 +351,9 @@ class TestDecodeCrdtDocument:
         """Non-decodable data should return empty string, not crash."""
         assert service._decode_crdt_document("") == ""
 
+    def test_decode_malformed_base64_returns_empty(self, service):
+        assert service._decode_crdt_document("!!!not-base64!!!") == ""
+
     def test_decode_bytes_input(self, service):
         """Accept raw bytes as well as base64 string."""
         import base64
@@ -1262,6 +1265,7 @@ class TestAdditionalWriteApis:
         assert len(create_ops) == 2
         assert create_ops[1].record.recordType == "Hashtag"
         assert create_ops[1].record.fields["Name"].value == "travel"
+        assert svc._raw.modify.call_args.kwargs["atomic"] is True
 
         svc._raw.modify.reset_mock()
         svc._raw.modify.return_value = self._ok_modify()
@@ -1271,6 +1275,7 @@ class TestAdditionalWriteApis:
         delete_ops = svc._raw.modify.call_args.kwargs["operations"]
         assert len(delete_ops) == 2
         assert delete_ops[1].record.fields["Deleted"].value == 1
+        assert svc._raw.modify.call_args.kwargs["atomic"] is True
 
     def test_create_update_delete_url_attachment(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
@@ -1413,6 +1418,44 @@ class TestAdditionalWriteApis:
         delete_ops = svc._raw.modify.call_args.kwargs["operations"]
         expected_modified = delete_ops[0].record.fields["LastModifiedDate"].value
         assert reminder.modified == expected_modified
+
+    def test_update_persists_editable_reminder_fields(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[self._ack("Reminder/REM-UPD-ALL", "Reminder", "new-reminder-tag")],
+            syncToken="mock-sync",
+        )
+
+        due_date = datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc)
+        reminder = Reminder(
+            id="Reminder/REM-UPD-ALL",
+            list_id="List/LIST-001",
+            title="Reminder",
+            desc="Body",
+            completed=True,
+            due_date=due_date,
+            priority=1,
+            flagged=True,
+            all_day=True,
+            time_zone="Europe/Paris",
+            parent_reminder_id="PARENT-001",
+            record_change_tag="old-reminder-tag",
+        )
+
+        svc.update(reminder)
+
+        update_op = svc._raw.modify.call_args.kwargs["operations"][0]
+        fields = update_op.record.fields
+        assert fields["Completed"].value == 1
+        assert fields["Priority"].value == 1
+        assert fields["Flagged"].value == 1
+        assert fields["AllDay"].value == 1
+        assert fields["DueDate"].value == due_date
+        assert fields["TimeZone"].value == "Europe/Paris"
+        assert fields["ParentReminder"].value.recordName == "Reminder/PARENT-001"
+        assert reminder.record_change_tag == "new-reminder-tag"
+        assert reminder.modified == fields["LastModifiedDate"].value
 
     def test_create_hashtag_hydrates_record_change_tags(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
@@ -1903,6 +1946,20 @@ class TestReminderReadPaths:
         with pytest.raises(LookupError, match="Reminder not found"):
             svc.get("Reminder/MISSING")
 
+    def test_get_normalizes_unprefixed_reminder_id(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.lookup.return_value = MagicMock(
+            records=[self._reminder_record("Reminder/NORMALIZED", self.LIST_A)]
+        )
+
+        reminder = svc.get("NORMALIZED")
+
+        assert reminder.id == "Reminder/NORMALIZED"
+        assert svc._raw.lookup.call_args.kwargs["record_names"] == [
+            "Reminder/NORMALIZED"
+        ]
+
     def test_get_raises_on_error_item(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
@@ -2067,6 +2124,45 @@ class TestReminderReadPaths:
         assert out[0].trigger is not None
         assert out[0].alarm.id == "Alarm/AL-1"
         assert out[0].trigger.id == "AlarmTrigger/TRIG-1"
+
+    def test_alarms_for_normalizes_prefixed_trigger_ids(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.lookup.side_effect = [
+            MagicMock(
+                records=[
+                    self._alarm_record(
+                        "Alarm/AL-1",
+                        "Reminder/A",
+                        "AlarmTrigger/TRIG-1",
+                    )
+                ]
+            ),
+            MagicMock(
+                records=[
+                    self._trigger_record(
+                        "AlarmTrigger/TRIG-1",
+                        "Alarm/AL-1",
+                    )
+                ]
+            ),
+        ]
+
+        reminder = Reminder(
+            id="Reminder/A",
+            list_id=self.LIST_A,
+            title="A",
+            alarm_ids=["AL-1"],
+        )
+
+        out = svc.alarms_for(reminder)
+
+        assert len(out) == 1
+        assert out[0].trigger is not None
+        assert out[0].trigger.id == "AlarmTrigger/TRIG-1"
+        assert svc._raw.lookup.call_args_list[1].kwargs["record_names"] == [
+            "AlarmTrigger/TRIG-1"
+        ]
 
     def test_alarms_for_raises_on_alarm_lookup_error_item(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})

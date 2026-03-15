@@ -264,6 +264,7 @@ def main() -> int:
     args = parse_args()
     tracker = ValidationTracker()
     state = RunState()
+    api: Optional[PyiCloudService] = None
 
     try:
         api = authenticate(args)
@@ -1052,7 +1053,7 @@ def main() -> int:
 
     finally:
         # Cleanup always runs if requested, even after failures.
-        if args.cleanup:
+        if args.cleanup and api is not None:
             try:
                 cleanup_generated(api, state)
             except Exception as cleanup_exc:  # pragma: no cover

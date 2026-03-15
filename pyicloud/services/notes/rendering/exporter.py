@@ -39,12 +39,15 @@ def decode_and_parse_note(record: CKRecord) -> Optional[pb.Note]:
     raw = record.fields.get_value("TextDataEncrypted")
     if not raw:
         return None
-    nb = BodyDecoder().decode(raw)
-    if not nb or not getattr(nb, "bytes", None):
+    try:
+        nb = BodyDecoder().decode(raw)
+        if not nb or not getattr(nb, "bytes", None):
+            return None
+        msg = pb.NoteStoreProto()
+        msg.ParseFromString(nb.bytes)
+        return getattr(getattr(msg, "document", None), "note", None)
+    except Exception:
         return None
-    msg = pb.NoteStoreProto()
-    msg.ParseFromString(nb.bytes)
-    return getattr(getattr(msg, "document", None), "note", None)
 
 
 def _attachment_ids_from_record_and_runs(record: CKRecord, note: pb.Note) -> List[str]:
@@ -507,7 +510,10 @@ def write_html(
     os.makedirs(out_dir, exist_ok=True)
     page = render_note_page(title, html_fragment) if full_page else html_fragment
     fname = filename or f"{_safe_name(title)}.html"
-    path = os.path.join(out_dir, fname)
+    root = os.path.abspath(out_dir)
+    path = os.path.abspath(os.path.join(root, fname))
+    if os.path.commonpath([root, path]) != root:
+        raise ValueError("filename must stay within out_dir")
     with open(path, "w", encoding="utf-8") as f:
         f.write(page)
     return path

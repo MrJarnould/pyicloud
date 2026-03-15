@@ -885,7 +885,9 @@ _Create, update, and delete a reminder:_
 from datetime import datetime, timedelta, timezone
 
 reminders = api.reminders
-target_list = next(iter(reminders.lists()))
+target_list = next(iter(reminders.lists()), None)
+if target_list is None:
+    raise RuntimeError("No reminder lists found")
 
 created = reminders.create(
     list_id=target_list.id,
@@ -911,7 +913,9 @@ _Work with a compound list snapshot:_
 
 ```python
 reminders = api.reminders
-target_list = next(iter(reminders.lists()))
+target_list = next(iter(reminders.lists()), None)
+if target_list is None:
+    raise RuntimeError("No reminder lists found")
 
 result = api.reminders.list_reminders(
     list_id=target_list.id,
@@ -957,7 +961,9 @@ _Add location triggers and inspect alarms:_
 from pyicloud.services.reminders.models import Proximity
 
 reminders = api.reminders
-reminder = next(iter(reminders.reminders()))
+reminder = next(iter(reminders.reminders()), None)
+if reminder is None:
+    raise RuntimeError("No reminders found")
 
 alarm, trigger = reminders.add_location_trigger(
     reminder,
@@ -979,7 +985,9 @@ _Add hashtags, URL attachments, and recurrence rules:_
 from pyicloud.services.reminders.models import RecurrenceFrequency
 
 reminders = api.reminders
-reminder = next(iter(reminders.reminders()))
+reminder = next(iter(reminders.reminders()), None)
+if reminder is None:
+    raise RuntimeError("No reminders found")
 
 hashtag = reminders.create_hashtag(reminder, "errands")
 attachment = reminders.create_url_attachment(

@@ -47,6 +47,7 @@ from .client import (
     CloudKitNotesClient,
     NotesApiError,
     NotesAuthError,
+    NotesError,
     NotesRateLimited,
 )
 from .domain import AttachmentId, NoteBody
@@ -55,13 +56,6 @@ from .models.constants import NotesDesiredKey, NotesRecordType
 from .models.dto import ChangeEvent, NoteFolder
 
 LOGGER = logging.getLogger(__name__)
-
-
-# ----------------------------- Service Errors --------------------------------
-
-
-class NotesError(Exception):
-    """Base Notes service error."""
 
 
 class NoteNotFound(NotesError):
@@ -770,7 +764,8 @@ class NotesService(BaseService):
         # Fetch metadata for uncached attachments
         seen_lookup: set[str] = set()
         lookup_ids: List[str] = []
-        for cid in lookup_candidates + ids:
+        lookup_source_ids = lookup_candidates if lookup_candidates else ids
+        for cid in lookup_source_ids:
             if cid not in seen_lookup:
                 seen_lookup.add(cid)
                 lookup_ids.append(cid)
@@ -822,19 +817,7 @@ class NotesService(BaseService):
                 base_id = attachment.id
                 aliases = self._attachment_aliases(rec_a, base_id)
                 for alias in aliases:
-                    if alias == base_id:
-                        att_obj = attachment
-                    else:
-                        att_obj = Attachment(
-                            id=alias,
-                            filename=attachment.filename,
-                            uti=attachment.uti,
-                            size=attachment.size,
-                            download_url=attachment.download_url,
-                            preview_url=attachment.preview_url,
-                            thumbnail_url=attachment.thumbnail_url,
-                        )
-                    self._attachment_meta_cache[alias] = att_obj
+                    self._attachment_meta_cache[alias] = attachment
                     LOGGER.debug(
                         "notes.attachments.cached base=%s alias=%s",
                         base_id,

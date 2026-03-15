@@ -107,6 +107,7 @@ class TableBuilder:
                 if v_idx is None:
                     continue
                 pos = axis.indices.get(k_idx, axis.indices.get(v_idx, 0))  # type: ignore[arg-type]
+                axis.total = max(axis.total, pos + 1)
                 axis.indices[v_idx] = pos
         except Exception:
             pass
@@ -238,7 +239,7 @@ def render_table_from_mergeable(
                 pending_cell_columns = target
         if tb.rows.total > 0 and tb.cols.total > 0:
             tb.init_table_buffers()
-        if pending_cell_columns:
+        if pending_cell_columns and tb.rows.total > 0 and tb.cols.total > 0:
             tb.parse_cell_columns(pending_cell_columns)
         break
     return tb.render_html_table()

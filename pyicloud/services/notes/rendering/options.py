@@ -57,13 +57,20 @@ class ExportConfig:
     def is_image_uti(self, uti: Optional[str]) -> bool:
         if not uti:
             return False
-        u = uti.lower()
-        # Prefixes
-        for p in self.image_uti_prefixes or ("public.image",):
-            try:
-                if u.startswith(p):
-                    return True
-            except Exception:
-                pass
-        # Exact forms
-        return u in (self.image_uti_exacts or ())
+        u = uti.casefold()
+
+        prefixes = self.image_uti_prefixes or ("public.image",)
+        for prefix in prefixes:
+            if not isinstance(prefix, str):
+                raise TypeError("image_uti_prefixes must contain only strings")
+            if u.startswith(prefix.casefold()):
+                return True
+
+        exacts = self.image_uti_exacts or ()
+        normalized_exacts = []
+        for exact in exacts:
+            if not isinstance(exact, str):
+                raise TypeError("image_uti_exacts must contain only strings")
+            normalized_exacts.append(exact.casefold())
+
+        return u in tuple(normalized_exacts)
