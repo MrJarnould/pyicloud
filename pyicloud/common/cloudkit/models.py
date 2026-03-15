@@ -34,7 +34,7 @@ from .base import CKModel
 CANONICAL_MIN_MS = -62135596800000  # 0001-01-01T00:00:00Z
 SENTINEL_ZERO_MS: set[int] = {
     CANONICAL_MIN_MS,
-    -62135769600000,  # observed in captures (approx 2 days earlier)
+    -62135769600000,  # observed in CloudKit responses (approx 2 days earlier)
 }
 
 
@@ -179,9 +179,9 @@ class CKChainProtectionInfo(CKModel):
 class CKShare(CKModel):
     """
     Minimal share reference as seen embedded under a record's top-level `share` key.
-    Your audit samples only surfaced `recordName` and `zoneID` inside this object.
+    Observed nested payloads only surfaced `recordName` and `zoneID` here.
     Keep this coarse for now; we can expand with shortGUID/shortTokenHash, etc.,
-    if they appear nested here in future captures.
+    if they appear nested here in future payloads.
     """
 
     recordName: Optional[str] = None
@@ -275,8 +275,8 @@ class CKReferenceListField(_CKFieldBase):
     value: List[CKReference]
 
 
-# Occasionally CloudKit also uses STRING-typed wrappers; not present in your
-# three responses at the 'fields' level, but kept for completeness.
+# Occasionally CloudKit also uses STRING-typed wrappers at the `fields` level;
+# keep support here for completeness.
 class CKStringField(_CKFieldBase):
     type: Literal["STRING"]
     value: Optional[str]
@@ -340,7 +340,7 @@ class CKAssetIDListField(_CKFieldBase):
 
 
 class CKUnknownListField(_CKFieldBase):
-    # extremely rare: seen on PaperAssets as UNKNOWN_LIST in your samples
+    # Extremely rare: observed on some PaperAssets payloads as UNKNOWN_LIST.
     type: Literal["UNKNOWN_LIST"]
     value: List[JsonValue]  # keep generic to be future-proof
 
@@ -744,7 +744,7 @@ class CKFVStringList(_CKFilterValueBase):
 
 class CKFVReference(_CKFilterValueBase):
     type: Literal["REFERENCE"]
-    value: CKReference  # zoneID optional in your samples
+    value: CKReference  # zoneID is optional in observed payloads
 
 
 class CKFVReferenceList(_CKFilterValueBase):
@@ -800,7 +800,7 @@ class CKQueryObject(CKModel):
     The 'query' object inside the request.
 
     recordType can be an app-defined pseudo type like "SearchIndexes" or "pinned"
-    (your samples), or a real record type.
+    or a real record type.
     """
 
     recordType: str
@@ -858,7 +858,7 @@ class CKZoneChangesZone(CKModel):
     """
     One zone entry inside the /changes/zone response.
 
-    Based on your corpus:
+    Observed shape:
       - Always has: records[], zoneID, syncToken
       - moreComing is present but sometimes null (treat as Optional[bool])
     """
@@ -888,7 +888,7 @@ class CKZoneChangesZoneReq(CKModel):
     """
     One zone request entry for /changes/zone.
 
-    Observed keys in corpus:
+    Observed keys:
       - zoneID: includes zoneName (e.g., "Notes" or "Reminders"), sometimes zoneType and ownerRecordName (for shared)
       - desiredKeys: list of field names to project (duplicates allowed, order preserved)
       - desiredRecordTypes: list of record types to include
