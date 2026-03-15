@@ -9,7 +9,7 @@ import base64
 import json
 import logging
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -1226,6 +1226,86 @@ class TestMutationErrorHandling:
 
         assert reminder.alarm_ids == []
 
+    def test_add_location_trigger_validates_radius_before_modify(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        reminder = Reminder(
+            id="Reminder/REM-001",
+            list_id="List/LIST-001",
+            title="Pick up coffee near Eiffel Tower",
+            record_change_tag="mock-change-tag",
+            alarm_ids=[],
+        )
+
+        with pytest.raises(ValidationError):
+            svc.add_location_trigger(
+                reminder=reminder,
+                title="Eiffel Tower",
+                address="Paris",
+                latitude=48.8584,
+                longitude=2.2945,
+                radius=-1.0,
+                proximity=Proximity.ARRIVING,
+            )
+
+        svc._raw.modify.assert_not_called()
+
+    def test_add_location_trigger_normalizes_shorthand_reminder_ids(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        def _ack(
+            record_name: str, record_type: str, record_change_tag: str
+        ) -> CKRecord:
+            return CKRecord.model_validate(
+                {
+                    "recordName": record_name,
+                    "recordType": record_type,
+                    "recordChangeTag": record_change_tag,
+                    "fields": {},
+                }
+            )
+
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[
+                _ack("Reminder/REM-TRIG", "Reminder", "ctag-rem-new"),
+                _ack("Alarm/ALARM-1", "Alarm", "ctag-alarm-new"),
+                _ack("AlarmTrigger/TRIG-1", "AlarmTrigger", "ctag-trigger-new"),
+            ],
+            syncToken="mock-sync",
+        )
+
+        with patch(
+            "uuid.uuid4",
+            side_effect=["ALARM-1", "TRIG-1", "LOC-1", "TOKEN-1", "TOKEN-2"],
+        ):
+            alarm, trigger = svc.add_location_trigger(
+                reminder=Reminder(
+                    id="REM-TRIG",
+                    list_id="List/LIST-001",
+                    title="Reminder",
+                    record_change_tag="ctag-rem-old",
+                    alarm_ids=[],
+                ),
+                title="Office",
+                address="1 Infinite Loop",
+                latitude=37.3318,
+                longitude=-122.0312,
+                radius=150.0,
+                proximity=Proximity.ARRIVING,
+            )
+
+        operations = svc._raw.modify.call_args.kwargs["operations"]
+        assert operations[0].record.recordName == "Reminder/REM-TRIG"
+        assert (
+            operations[1].record.fields["Reminder"].value.recordName
+            == "Reminder/REM-TRIG"
+        )
+        assert operations[1].record.parent.recordName == "Reminder/REM-TRIG"
+        assert alarm.reminder_id == "Reminder/REM-TRIG"
+        assert trigger.id == "AlarmTrigger/TRIG-1"
+
     def test_create_child_reminder_sets_parent_reference(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
@@ -1346,6 +1426,38 @@ class TestAdditionalWriteApis:
         assert len(delete_ops) == 2
         assert delete_ops[1].record.fields["Deleted"].value == 1
 
+    def test_create_url_attachment_normalizes_shorthand_reminder_ids(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[
+                self._ack("Reminder/REM-ATT", "Reminder", "ctag-rem-new"),
+                self._ack("Attachment/ATT-NEW", "Attachment", "ctag-att-new"),
+            ],
+            syncToken="mock-sync",
+        )
+
+        with patch("uuid.uuid4", return_value="ATT-NEW"):
+            attachment = svc.create_url_attachment(
+                reminder=Reminder(
+                    id="REM-ATT",
+                    list_id="List/LIST-001",
+                    title="Attachment reminder",
+                    record_change_tag="ctag-rem-old",
+                    attachment_ids=[],
+                ),
+                url="https://example.com",
+            )
+
+        operations = svc._raw.modify.call_args.kwargs["operations"]
+        assert operations[0].record.recordName == "Reminder/REM-ATT"
+        assert (
+            operations[1].record.fields["Reminder"].value.recordName
+            == "Reminder/REM-ATT"
+        )
+        assert operations[1].record.parent.recordName == "Reminder/REM-ATT"
+        assert attachment.reminder_id == "Reminder/REM-ATT"
+
     def test_update_attachment_rejects_noop(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
         svc._raw = MagicMock()
@@ -1359,6 +1471,26 @@ class TestAdditionalWriteApis:
 
         with pytest.raises(ValueError, match="No attachment fields"):
             svc.update_attachment(attachment)
+
+        svc._raw.modify.assert_not_called()
+
+    def test_update_image_attachment_validates_before_modify(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        attachment = ImageAttachment(
+            id="Attachment/A-IMG",
+            reminder_id="Reminder/REM-ATT",
+            file_asset_url="https://example.com/file.jpg",
+            filename="file.jpg",
+            file_size=10,
+            width=100,
+            height=50,
+            record_change_tag="ctag-att",
+        )
+
+        with pytest.raises(ValidationError):
+            svc.update_attachment(attachment, width=-1)
 
         svc._raw.modify.assert_not_called()
 
@@ -1408,6 +1540,27 @@ class TestAdditionalWriteApis:
         delete_ops = svc._raw.modify.call_args.kwargs["operations"]
         assert len(delete_ops) == 2
         assert delete_ops[1].record.fields["Deleted"].value == 1
+
+    def test_create_recurrence_rule_validates_before_modify(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+
+        reminder = Reminder(
+            id="Reminder/REM-RR",
+            list_id="List/LIST-001",
+            title="Recurring reminder",
+            record_change_tag="ctag-rem",
+            recurrence_rule_ids=[],
+        )
+
+        with pytest.raises(ValidationError):
+            svc.create_recurrence_rule(
+                reminder=reminder,
+                frequency=RecurrenceFrequency.WEEKLY,
+                interval=0,
+            )
+
+        svc._raw.modify.assert_not_called()
 
     def test_update_recurrence_rule_rejects_noop(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
@@ -1482,6 +1635,32 @@ class TestAdditionalWriteApis:
         assert fields["ParentReminder"].value.recordName == "Reminder/PARENT-001"
         assert reminder.record_change_tag == "new-reminder-tag"
         assert reminder.modified == fields["LastModifiedDate"].value
+
+    def test_update_normalizes_shorthand_reminder_ids(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[self._ack("Reminder/REM-UPD-SHORT", "Reminder", "new-rem-tag")],
+            syncToken="mock-sync",
+        )
+
+        reminder = Reminder(
+            id="REM-UPD-SHORT",
+            list_id="List/LIST-001",
+            title="Reminder",
+            desc="Body",
+            parent_reminder_id="PARENT-001",
+            record_change_tag="old-rem-tag",
+        )
+
+        svc.update(reminder)
+
+        update_op = svc._raw.modify.call_args.kwargs["operations"][0]
+        assert update_op.record.recordName == "Reminder/REM-UPD-SHORT"
+        assert (
+            update_op.record.fields["ParentReminder"].value.recordName
+            == "Reminder/PARENT-001"
+        )
 
     def test_update_can_clear_optional_reminder_fields(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})

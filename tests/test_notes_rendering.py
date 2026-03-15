@@ -18,7 +18,10 @@ from pyicloud.services.notes.rendering.exporter import (
 )
 from pyicloud.services.notes.rendering.options import ExportConfig
 from pyicloud.services.notes.rendering.renderer import NoteRenderer, _safe_anchor_href
-from pyicloud.services.notes.rendering.table_builder import render_table_from_mergeable
+from pyicloud.services.notes.rendering.table_builder import (
+    TableBuilder,
+    render_table_from_mergeable,
+)
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "note_fixture.json")
 with open(FIXTURE_PATH, "r", encoding="utf-8") as fixture_file:
@@ -246,6 +249,114 @@ class TestNoteRendering(unittest.TestCase):
         self.assertIsNone(
             render_table_from_mergeable(b"not-a-table", lambda _: "<p>x</p>")
         )
+
+    def test_render_table_from_mergeable_uses_later_valid_root_candidate(self):
+        class _FakeValue:
+            def __init__(self, object_index):
+                self.object_index = object_index
+
+        class _FakeMapEntry:
+            def __init__(self, key, object_index):
+                self.key = key
+                self.value = _FakeValue(object_index)
+
+        class _FakeRootEntry:
+            def __init__(self, *map_entries):
+                self.custom_map = SimpleNamespace(type=0, map_entry=list(map_entries))
+
+            def HasField(self, field_name):
+                return field_name == "custom_map"
+
+        class _AxisEntry:
+            def __init__(self, total):
+                self.total = total
+
+        class _CellEntry:
+            def __init__(self, html):
+                self.cell_html = html
+
+        class _FakeProto:
+            def __init__(self):
+                entries = [
+                    _FakeRootEntry(
+                        _FakeMapEntry(0, 2),
+                        _FakeMapEntry(1, 3),
+                        _FakeMapEntry(2, 4),
+                    ),
+                    _FakeRootEntry(
+                        _FakeMapEntry(0, 5),
+                        _FakeMapEntry(1, 6),
+                        _FakeMapEntry(2, 7),
+                    ),
+                    _AxisEntry(0),
+                    _AxisEntry(0),
+                    _CellEntry(""),
+                    _AxisEntry(1),
+                    _AxisEntry(1),
+                    _CellEntry("<p>ok</p>"),
+                ]
+                data = SimpleNamespace(
+                    mergeable_data_object_key_item=[
+                        "crRows",
+                        "crColumns",
+                        "cellColumns",
+                    ],
+                    mergeable_data_object_type_item=["com.apple.notes.ICTable"],
+                    mergeable_data_object_uuid_item=[],
+                    mergeable_data_object_entry=entries,
+                )
+                self.mergable_data_object = SimpleNamespace(
+                    mergeable_data_object_data=data
+                )
+
+            def ParseFromString(self, payload):
+                return None
+
+        with (
+            patch(
+                "pyicloud.services.notes.rendering.table_builder.pb.MergableDataProto",
+                _FakeProto,
+            ),
+            patch.object(
+                TableBuilder,
+                "parse_rows",
+                lambda self, entry: setattr(self.rows, "total", entry.total),
+            ),
+            patch.object(
+                TableBuilder,
+                "parse_cols",
+                lambda self, entry: setattr(self.cols, "total", entry.total),
+            ),
+            patch.object(
+                TableBuilder,
+                "parse_cell_columns",
+                lambda self, entry: self.cells.__setitem__(
+                    0,
+                    [SimpleNamespace(html=entry.cell_html)],
+                )
+                if self.cells
+                else None,
+            ),
+        ):
+            html = render_table_from_mergeable(b"candidate-scan", lambda _: "")
+
+        self.assertIn("<table>", html)
+        self.assertIn("<p>ok</p>", html)
+
+    def test_table_builder_caps_large_allocations(self):
+        builder = TableBuilder(
+            key_items=[],
+            type_items=[],
+            uuid_items=[],
+            entries=[],
+            render_note_cb=lambda _: "",
+        )
+        builder.rows.total = 400
+        builder.cols.total = 400
+
+        builder.init_table_buffers()
+
+        self.assertEqual(builder.cells, [])
 
     def test_safe_anchor_href_allows_only_expected_schemes(self):
         self.assertEqual(

@@ -86,6 +86,24 @@ def _is_remote_url(url: str) -> bool:
     return parts.scheme.casefold() in {"http", "https"}
 
 
+def _link_attrs(
+    ctx: AttachmentContext,
+    *,
+    class_name: str,
+    href: Optional[str] = None,
+) -> dict[str, str]:
+    attrs = {"class": class_name}
+    if href:
+        attrs["href"] = href
+    if ctx.link_rel:
+        attrs["rel"] = ctx.link_rel
+    if ctx.link_referrerpolicy:
+        attrs["referrerpolicy"] = ctx.link_referrerpolicy
+    if ctx.link_target:
+        attrs["target"] = ctx.link_target
+    return attrs
+
+
 class _Renderer:
     def render(
         self, ctx: AttachmentContext, render_note_cb: Callable
@@ -96,17 +114,11 @@ class _Renderer:
 class _DefaultRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         label = ctx.title or ctx.uti or "attachment"
-        extra = {"class": "attachment link"}
         href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
-        if href:
-            extra["href"] = href
-        if ctx.link_rel:
-            extra["rel"] = ctx.link_rel
-        if ctx.link_referrerpolicy:
-            extra["referrerpolicy"] = ctx.link_referrerpolicy
-        if ctx.link_target:
-            extra["target"] = ctx.link_target
-        return h("a", **ctx.base_attrs(extra))(label).render()
+        return h(
+            "a",
+            **ctx.base_attrs(_link_attrs(ctx, class_name="attachment link", href=href)),
+        )(label).render()
 
 
 class _TableRenderer(_Renderer):
@@ -117,17 +129,11 @@ class _TableRenderer(_Renderer):
                 return html_tbl
         # Fallback to a link
         label = ctx.title or ctx.uti or "table"
-        extra = {"class": "attachment link"}
         href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
-        if href:
-            extra["href"] = href
-        if ctx.link_rel:
-            extra["rel"] = ctx.link_rel
-        if ctx.link_referrerpolicy:
-            extra["referrerpolicy"] = ctx.link_referrerpolicy
-        if ctx.link_target:
-            extra["target"] = ctx.link_target
-        return h("a", **ctx.base_attrs(extra))(label).render()
+        return h(
+            "a",
+            **ctx.base_attrs(_link_attrs(ctx, class_name="attachment link", href=href)),
+        )(label).render()
 
 
 class _UrlRenderer(_Renderer):
@@ -138,31 +144,16 @@ class _UrlRenderer(_Renderer):
             allowed_schemes={"http", "https", "mailto", "tel"},
         )
         if href:
-            extra_link_attrs = {}
-            if ctx.link_rel:
-                extra_link_attrs["rel"] = ctx.link_rel
-            if ctx.link_referrerpolicy:
-                extra_link_attrs["referrerpolicy"] = ctx.link_referrerpolicy
-            if ctx.link_target:
-                extra_link_attrs["target"] = ctx.link_target
             return h(
                 "a",
                 **ctx.base_attrs(
-                    {
-                        "href": href,
-                        "class": "attachment link",
-                        **extra_link_attrs,
-                    }
+                    _link_attrs(ctx, class_name="attachment link", href=href)
                 ),
             )(title).render()
-        extra = {"class": "attachment link"}
-        if ctx.link_rel:
-            extra["rel"] = ctx.link_rel
-        if ctx.link_referrerpolicy:
-            extra["referrerpolicy"] = ctx.link_referrerpolicy
-        if ctx.link_target:
-            extra["target"] = ctx.link_target
-        return h("a", **ctx.base_attrs(extra))(title).render()
+        return h(
+            "a",
+            **ctx.base_attrs(_link_attrs(ctx, class_name="attachment link")),
+        )(title).render()
 
 
 class _ImageRenderer(_Renderer):
@@ -242,31 +233,18 @@ class _PdfRenderer(_Renderer):
                         "style": f"width:100%;height:{height_px}px",
                     }
                 )
-                extra_link_attrs = {}
-                if ctx.link_rel:
-                    extra_link_attrs["rel"] = ctx.link_rel
-                if ctx.link_referrerpolicy:
-                    extra_link_attrs["referrerpolicy"] = ctx.link_referrerpolicy
-                if ctx.link_target:
-                    extra_link_attrs["target"] = ctx.link_target
                 fallback = h(
                     "a",
-                    href=url,
-                    **ctx.base_attrs({"class": "attachment link", **extra_link_attrs}),
+                    **ctx.base_attrs(
+                        _link_attrs(ctx, class_name="attachment link", href=url)
+                    ),
                 )(title)
                 return h("object", **obj_attrs)(fallback).render()
             # Remote embed not allowed → use a link
-            extra_link_attrs = {}
-            if ctx.link_rel:
-                extra_link_attrs["rel"] = ctx.link_rel
-            if ctx.link_referrerpolicy:
-                extra_link_attrs["referrerpolicy"] = ctx.link_referrerpolicy
-            if ctx.link_target:
-                extra_link_attrs["target"] = ctx.link_target
             return h(
                 "a",
                 **ctx.base_attrs(
-                    {"href": url, "class": "attachment file", **extra_link_attrs}
+                    _link_attrs(ctx, class_name="attachment file", href=url)
                 ),
             )(title).render()
         # No URL → plain label link without href
@@ -278,21 +256,10 @@ class _VCardRenderer(_Renderer):
         title = ctx.title or "contact"
         href = _safe_url(ctx.primary_url, allowed_schemes={"http", "https"})
         if href:
-            extra_link_attrs = {}
-            if ctx.link_rel:
-                extra_link_attrs["rel"] = ctx.link_rel
-            if ctx.link_referrerpolicy:
-                extra_link_attrs["referrerpolicy"] = ctx.link_referrerpolicy
-            if ctx.link_target:
-                extra_link_attrs["target"] = ctx.link_target
             return h(
                 "a",
                 **ctx.base_attrs(
-                    {
-                        "href": href,
-                        "class": "attachment contact",
-                        **extra_link_attrs,
-                    }
+                    _link_attrs(ctx, class_name="attachment contact", href=href)
                 ),
             )(title).render()
         return h("a", **ctx.base_attrs({"class": "attachment contact"}))(title).render()
@@ -336,7 +303,6 @@ _DEFAULT = _DefaultRenderer()
 _TABLE = _TableRenderer()
 _URL = _UrlRenderer()
 _IMAGE = _ImageRenderer()
-_AUDIO = _AudioRenderer()
 _AUDIO = _AudioRenderer()
 _VIDEO = _VideoRenderer()
 _PDF = _PdfRenderer()

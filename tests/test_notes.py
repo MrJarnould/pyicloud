@@ -4,9 +4,11 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import datetime
+from typing import Annotated
 from unittest.mock import MagicMock, patch
 
-from pydantic import ValidationError
+from pydantic import BaseModel, BeforeValidator, ValidationError
 
 from pyicloud.common.cloudkit import CKLookupResponse
 from pyicloud.common.cloudkit.base import resolve_cloudkit_validation_extra
@@ -356,6 +358,19 @@ class NotesServiceTest(unittest.TestCase):
         self.assertIsNotNone(created)
         self.assertEqual(created.isoformat(), "2025-01-01T00:00:00+00:00")
         self.assertIsNone(_from_secs_or_millis("999999999999999999999999"))
+
+    def test_shared_cloudkit_invalid_timestamp_types_raise_validation_error(self):
+        class Demo(BaseModel):
+            created: Annotated[datetime, BeforeValidator(_from_millis_or_none)]
+            expires: Annotated[datetime, BeforeValidator(_from_secs_or_millis)]
+
+        with self.assertRaises(ValidationError):
+            Demo.model_validate(
+                {
+                    "created": object(),
+                    "expires": object(),
+                }
+            )
 
     def test_shared_cloudkit_share_allows_encrypted_string_fields(self):
         """Shared cloudkit.share records may expose STRING + isEncrypted fields."""

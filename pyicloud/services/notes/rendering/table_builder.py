@@ -44,6 +44,9 @@ TABLE_SPEC = TableSpec(
     cellcols_key=MapKey.CELL_COLUMNS,
 )
 
+MAX_TABLE_AXIS_ITEMS = 512
+MAX_TABLE_CELLS = 50_000
+
 
 @dataclass(slots=True)
 class Cell:
@@ -119,6 +122,15 @@ class TableBuilder:
         self._parse_axis(entry, self.cols)
 
     def init_table_buffers(self) -> None:
+        if (
+            self.rows.total <= 0
+            or self.cols.total <= 0
+            or self.rows.total > MAX_TABLE_AXIS_ITEMS
+            or self.cols.total > MAX_TABLE_AXIS_ITEMS
+            or self.rows.total * self.cols.total > MAX_TABLE_CELLS
+        ):
+            self.cells = []
+            return
         self.cells = [
             [Cell() for _ in range(self.cols.total)] for _ in range(self.rows.total)
         ]
@@ -152,6 +164,10 @@ class TableBuilder:
                 try:
                     cell_note = cell_ent.note
                     inner_html = self.render_note_cb(cell_note)
+                    if row_pos >= len(self.cells) or col_pos >= len(
+                        self.cells[row_pos]
+                    ):
+                        continue
                     self.cells[row_pos][col_pos].html = inner_html
                 except Exception:
                     continue
@@ -196,13 +212,6 @@ def render_table_from_mergeable(
     except Exception:
         return None
 
-    tb = TableBuilder(
-        key_items=key_items,
-        type_items=type_items,
-        uuid_items=uuid_items,
-        entries=entries,
-        render_note_cb=render_note_cb,
-    )
     # Find root entry by type name and walk
     for e in entries:
         if not e.HasField("custom_map"):
@@ -233,6 +242,13 @@ def render_table_from_mergeable(
         if not (tname_ok or (has_rows and has_cols and has_cells)):
             continue
 
+        tb = TableBuilder(
+            key_items=key_items,
+            type_items=type_items,
+            uuid_items=uuid_items,
+            entries=entries,
+            render_note_cb=render_note_cb,
+        )
         pending_cell_columns: Optional[pb.MergeableDataObjectRow] = None
         for me in e.custom_map.map_entry:
             kname = key_items[me.key] if 0 <= me.key < len(key_items) else None
@@ -252,12 +268,17 @@ def render_table_from_mergeable(
                     continue
             elif kname == TABLE_SPEC.cellcols_key.value:
                 pending_cell_columns = target
-        if tb.rows.total > 0 and tb.cols.total > 0:
-            tb.init_table_buffers()
-        if pending_cell_columns and tb.rows.total > 0 and tb.cols.total > 0:
+        if tb.rows.total <= 0 or tb.cols.total <= 0:
+            continue
+        tb.init_table_buffers()
+        if not tb.cells:
+            continue
+        if pending_cell_columns:
             try:
                 tb.parse_cell_columns(pending_cell_columns)
             except Exception:
-                return None
-        break
-    return tb.render_html_table()
+                continue
+        html_table = tb.render_html_table()
+        if html_table:
+            return html_table
+    return None

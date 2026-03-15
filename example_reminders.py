@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from getpass import getpass
 from time import monotonic, sleep
-from typing import Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 
 from pyicloud import PyiCloudService
 from pyicloud.services.reminders.models.domain import (
@@ -161,6 +161,36 @@ def resolve_credentials(args: argparse.Namespace) -> tuple[str, Optional[str]]:
     return username, password
 
 
+def _prompt_selection(
+    prompt: str, options: Sequence[Any], default_index: int = 0
+) -> int:
+    if not options:
+        raise ValueError("Cannot select from an empty option list.")
+    selected_index = default_index
+    if len(options) > 1:
+        raw_index = input(f"{prompt} [{default_index}]: ").strip()
+        if raw_index:
+            selected_index = int(raw_index)
+    if selected_index < 0 or selected_index >= len(options):
+        raise RuntimeError("Invalid selection.")
+    return selected_index
+
+
+def _trusted_device_label(device: dict[str, Any]) -> str:
+    return str(
+        device.get("deviceName")
+        or device.get("phoneNumber")
+        or device.get("id")
+        or "Unknown trusted device"
+    )
+
+
+def _raw_token(value: str) -> str:
+    if "/" not in value:
+        return value
+    return value.split("/", 1)[1]
+
+
 def authenticate(args: argparse.Namespace) -> PyiCloudService:
     username, password = resolve_credentials(args)
     print("Authenticating with iCloud...")
@@ -169,20 +199,32 @@ def authenticate(args: argparse.Namespace) -> PyiCloudService:
     if api.requires_2fa:
         key_names = list(api.security_key_names or [])
         if key_names:
+            fido2_devices = list(api.fido2_devices)
+            if not fido2_devices:
+                raise RuntimeError(
+                    "Security key verification required but no FIDO2 devices were detected."
+                )
             print("Security key verification required.")
-            for index, name in enumerate(key_names):
-                print(f"  {index}: {name}")
-            selected_index = 0
-            if len(key_names) > 1:
-                raw_index = input("Select security key [0]: ").strip()
-                if raw_index:
-                    selected_index = int(raw_index)
-                if selected_index < 0 or selected_index >= len(key_names):
-                    raise RuntimeError("Invalid security key selection.")
-            selected_name = key_names[selected_index]
+            for index, device in enumerate(fido2_devices):
+                label = (
+                    key_names[index]
+                    if index < len(key_names)
+                    else f"Security key {index}"
+                )
+                print(f"  {index}: {label} ({device})")
+            selected_index = _prompt_selection(
+                "Select security key",
+                fido2_devices,
+            )
+            selected_device = fido2_devices[selected_index]
+            selected_name = (
+                key_names[selected_index]
+                if selected_index < len(key_names)
+                else str(selected_device)
+            )
             print(f"Touch security key: {selected_name}")
             try:
-                api.confirm_security_key()
+                api.confirm_security_key(selected_device)
             except Exception as exc:  # pragma: no cover - live integration path
                 raise RuntimeError(
                     f"Security key verification failed for {selected_name}."
@@ -200,7 +242,15 @@ def authenticate(args: argparse.Namespace) -> PyiCloudService:
         if not devices:
             raise RuntimeError("2SA required but no trusted devices were returned.")
 
-        device = devices[0]
+        print("Trusted devices:")
+        for index, device in enumerate(devices):
+            print(f"  {index}: {_trusted_device_label(device)}")
+
+        selected_index = _prompt_selection(
+            "Select trusted device",
+            devices,
+        )
+        device = devices[selected_index]
         if not api.send_verification_code(device):
             raise RuntimeError("Failed to send 2SA verification code.")
 
@@ -487,6 +537,103 @@ def main() -> int:
 
             return fresh
 
+        def wait_for_reminder(
+            description: str,
+            reminder_id: str,
+            predicate: Callable[[Reminder], bool],
+            *,
+            allow_missing: bool = False,
+        ) -> tuple[Optional[Reminder], bool]:
+            matched: dict[str, Optional[Reminder] | bool] = {
+                "reminder": None,
+                "missing": False,
+            }
+
+            def _poll() -> bool:
+                try:
+                    fresh = reminders_api.get(reminder_id)
+                except LookupError:
+                    matched["reminder"] = None
+                    matched["missing"] = True
+                    return allow_missing
+
+                matched["missing"] = False
+                if not predicate(fresh):
+                    return False
+                matched["reminder"] = fresh
+                return True
+
+            wait_until(
+                description,
+                _poll,
+                args.consistency_timeout,
+                args.poll_interval,
+            )
+            return matched["reminder"], bool(matched["missing"])
+
+        def wait_for_linked_id(
+            description: str,
+            reminder_id: str,
+            attr_name: str,
+            linked_id: str,
+            *,
+            present: bool,
+        ) -> Reminder:
+            expected_raw_id = _raw_token(linked_id)
+            fresh, _ = wait_for_reminder(
+                description,
+                reminder_id,
+                lambda reminder: (
+                    any(
+                        _raw_token(item) == expected_raw_id
+                        for item in getattr(reminder, attr_name)
+                    )
+                    if present
+                    else all(
+                        _raw_token(item) != expected_raw_id
+                        for item in getattr(reminder, attr_name)
+                    )
+                ),
+            )
+            if fresh is None:
+                fresh = reminders_api.get(reminder_id)
+            return fresh
+
+        def wait_for_relationship_rows(
+            description: str,
+            reminder_id: str,
+            fetch_rows: Callable[[Reminder], list[Any]],
+            predicate: Callable[[list[Any]], bool],
+        ) -> tuple[Reminder, list[Any]]:
+            matched: dict[str, Any] = {"reminder": None, "rows": None}
+
+            def _poll() -> bool:
+                try:
+                    fresh = reminders_api.get(reminder_id)
+                except LookupError:
+                    return False
+                rows = fetch_rows(fresh)
+                if not predicate(rows):
+                    return False
+                matched["reminder"] = fresh
+                matched["rows"] = rows
+                return True
+
+            wait_until(
+                description,
+                _poll,
+                args.consistency_timeout,
+                args.poll_interval,
+            )
+
+            fresh = matched["reminder"]
+            if fresh is None:
+                fresh = reminders_api.get(reminder_id)
+            rows = matched["rows"]
+            if rows is None:
+                rows = fetch_rows(fresh)
+            return fresh, rows
+
         banner("3) Create Matrix (All Supported create() Configurations)")
         due_aware = (datetime.now(tz=timezone.utc) + timedelta(days=1)).replace(
             hour=9, minute=0, second=0, microsecond=0
@@ -743,8 +890,28 @@ def main() -> int:
             "add_location_trigger() returns LEAVING trigger",
         )
 
-        location_arrive_fresh = reminders_api.get(location_arrive.id)
-        location_leave_fresh = reminders_api.get(location_leave.id)
+        location_arrive_fresh, arrive_alarm_rows = wait_for_relationship_rows(
+            "ARRIVING location trigger to round-trip",
+            location_arrive.id,
+            reminders_api.alarms_for,
+            lambda rows: any(
+                row.alarm.id == arrive_alarm.id
+                and row.trigger is not None
+                and row.trigger.id == arrive_trigger.id
+                for row in rows
+            ),
+        )
+        location_leave_fresh, leave_alarm_rows = wait_for_relationship_rows(
+            "LEAVING location trigger to round-trip",
+            location_leave.id,
+            reminders_api.alarms_for,
+            lambda rows: any(
+                row.alarm.id == leave_alarm.id
+                and row.trigger is not None
+                and row.trigger.id == leave_trigger.id
+                for row in rows
+            ),
+        )
 
         tracker.expect(
             len(location_arrive_fresh.alarm_ids) >= 1,
@@ -756,9 +923,6 @@ def main() -> int:
             "LEAVING reminder has alarm_ids after trigger creation",
             f"alarm_ids={location_leave_fresh.alarm_ids}",
         )
-
-        arrive_alarm_rows = reminders_api.alarms_for(location_arrive_fresh)
-        leave_alarm_rows = reminders_api.alarms_for(location_leave_fresh)
 
         arrive_match = next(
             (row for row in arrive_alarm_rows if row.alarm.id == arrive_alarm.id),
@@ -830,7 +994,13 @@ def main() -> int:
         linked_fresh = reminders_api.get(linked_case.id)
 
         hashtag_created = reminders_api.create_hashtag(linked_fresh, "pyicloud")
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "created hashtag ID to appear on linked reminder",
+            linked_case.id,
+            "hashtag_ids",
+            hashtag_created.id,
+            present=True,
+        )
         tracker.expect(
             any(
                 hid == hashtag_created.id.split("/", 1)[1]
@@ -839,7 +1009,12 @@ def main() -> int:
             "create_hashtag() links hashtag ID on reminder",
             f"hashtag_ids={linked_fresh.hashtag_ids}",
         )
-        fetched_tags = reminders_api.tags_for(linked_fresh)
+        linked_fresh, fetched_tags = wait_for_relationship_rows(
+            "created hashtag to appear in tags_for()",
+            linked_case.id,
+            reminders_api.tags_for,
+            lambda rows: any(tag.id == hashtag_created.id for tag in rows),
+        )
         fetched_tag = next(
             (tag for tag in fetched_tags if tag.id == hashtag_created.id), None
         )
@@ -859,7 +1034,13 @@ def main() -> int:
             url="https://example.com/reminders",
             uti="public.url",
         )
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "created attachment ID to appear on linked reminder",
+            linked_case.id,
+            "attachment_ids",
+            attachment_created.id,
+            present=True,
+        )
         tracker.expect(
             any(
                 aid == attachment_created.id.split("/", 1)[1]
@@ -868,7 +1049,12 @@ def main() -> int:
             "create_url_attachment() links attachment ID on reminder",
             f"attachment_ids={linked_fresh.attachment_ids}",
         )
-        fetched_attachments = reminders_api.attachments_for(linked_fresh)
+        linked_fresh, fetched_attachments = wait_for_relationship_rows(
+            "created attachment to appear in attachments_for()",
+            linked_case.id,
+            reminders_api.attachments_for,
+            lambda rows: any(att.id == attachment_created.id for att in rows),
+        )
         fetched_attachment = next(
             (att for att in fetched_attachments if att.id == attachment_created.id),
             None,
@@ -883,8 +1069,16 @@ def main() -> int:
                 fetched_attachment,
                 url="https://example.org/reminders",
             )
-            linked_fresh = reminders_api.get(linked_case.id)
-            updated_attachments = reminders_api.attachments_for(linked_fresh)
+            linked_fresh, updated_attachments = wait_for_relationship_rows(
+                "updated URL attachment to round-trip",
+                linked_case.id,
+                reminders_api.attachments_for,
+                lambda rows: any(
+                    att.id == fetched_attachment.id
+                    and getattr(att, "url", None) == "https://example.org/reminders"
+                    for att in rows
+                ),
+            )
             tracker.expect(
                 any(
                     att.id == fetched_attachment.id
@@ -905,7 +1099,13 @@ def main() -> int:
             occurrence_count=0,
             first_day_of_week=1,
         )
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "created recurrence rule ID to appear on linked reminder",
+            linked_case.id,
+            "recurrence_rule_ids",
+            recurrence_created.id,
+            present=True,
+        )
         tracker.expect(
             any(
                 rid == recurrence_created.id.split("/", 1)[1]
@@ -914,7 +1114,12 @@ def main() -> int:
             "create_recurrence_rule() links recurrence ID on reminder",
             f"recurrence_rule_ids={linked_fresh.recurrence_rule_ids}",
         )
-        fetched_rules = reminders_api.recurrence_rules_for(linked_fresh)
+        linked_fresh, fetched_rules = wait_for_relationship_rows(
+            "created recurrence rule to appear in recurrence_rules_for()",
+            linked_case.id,
+            reminders_api.recurrence_rules_for,
+            lambda rows: any(rule.id == recurrence_created.id for rule in rows),
+        )
         fetched_rule = next(
             (rule for rule in fetched_rules if rule.id == recurrence_created.id),
             None,
@@ -930,8 +1135,17 @@ def main() -> int:
                 interval=3,
                 occurrence_count=5,
             )
-            linked_fresh = reminders_api.get(linked_case.id)
-            updated_rules = reminders_api.recurrence_rules_for(linked_fresh)
+            linked_fresh, updated_rules = wait_for_relationship_rows(
+                "updated recurrence rule to round-trip",
+                linked_case.id,
+                reminders_api.recurrence_rules_for,
+                lambda rows: any(
+                    rule.id == fetched_rule.id
+                    and rule.interval == 3
+                    and rule.occurrence_count == 5
+                    for rule in rows
+                ),
+            )
             tracker.expect(
                 any(
                     rule.id == fetched_rule.id
@@ -1056,22 +1270,35 @@ def main() -> int:
         reminders_api.delete(reminders_api.get(delete_candidate.id))
         state.deleted_ids.add(delete_candidate.id)
 
-        try:
-            deleted_state = reminders_api.get(delete_candidate.id)
+        deleted_state, delete_missing = wait_for_reminder(
+            "deleted reminder to disappear or report deleted=True",
+            delete_candidate.id,
+            lambda fresh: fresh.deleted is True,
+            allow_missing=True,
+        )
+        if delete_missing:
+            tracker.expect(
+                True,
+                "delete() made reminder non-retrievable via get()",
+            )
+        else:
+            if deleted_state is None:
+                deleted_state = reminders_api.get(delete_candidate.id)
             tracker.expect(
                 deleted_state.deleted is True,
                 "delete() marks reminder as deleted when record remains queryable",
                 f"deleted={deleted_state.deleted}",
             )
-        except LookupError:
-            tracker.expect(
-                True,
-                "delete() made reminder non-retrievable via get()",
-            )
 
         linked_fresh = reminders_api.get(linked_case.id)
         reminders_api.delete_hashtag(linked_fresh, hashtag_created)
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "deleted hashtag ID to disappear from linked reminder",
+            linked_case.id,
+            "hashtag_ids",
+            hashtag_created.id,
+            present=False,
+        )
         tracker.expect(
             all(
                 hid != hashtag_created.id.split("/", 1)[1]
@@ -1082,7 +1309,13 @@ def main() -> int:
         )
 
         reminders_api.delete_attachment(linked_fresh, attachment_created)
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "deleted attachment ID to disappear from linked reminder",
+            linked_case.id,
+            "attachment_ids",
+            attachment_created.id,
+            present=False,
+        )
         tracker.expect(
             all(
                 aid != attachment_created.id.split("/", 1)[1]
@@ -1093,7 +1326,13 @@ def main() -> int:
         )
 
         reminders_api.delete_recurrence_rule(linked_fresh, recurrence_created)
-        linked_fresh = reminders_api.get(linked_case.id)
+        linked_fresh = wait_for_linked_id(
+            "deleted recurrence rule ID to disappear from linked reminder",
+            linked_case.id,
+            "recurrence_rule_ids",
+            recurrence_created.id,
+            present=False,
+        )
         tracker.expect(
             all(
                 rid != recurrence_created.id.split("/", 1)[1]

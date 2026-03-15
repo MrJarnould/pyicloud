@@ -959,8 +959,9 @@ next_cursor = reminders.sync_cursor()
 ```
 
 `iter_changes(since=...)` yields `ReminderChangeEvent` objects. Updated
-reminders include a hydrated `reminder` payload; deleted reminders only include
-the `reminder_id`.
+reminders include a hydrated `reminder` payload. Deleted events may still carry
+`event.reminder` for soft-deleted records; only true tombstones guarantee
+`event.reminder is None`, in which case you should rely on `event.reminder_id`.
 
 _Add location triggers and inspect alarms:_
 

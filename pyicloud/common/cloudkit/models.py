@@ -52,7 +52,7 @@ def _from_millis_or_none(v):
         except (TypeError, ValueError, OverflowError):
             return None
     else:
-        raise TypeError("Expected milliseconds since epoch as int or numeric string")
+        raise ValueError("Expected milliseconds since epoch as int or numeric string")
     # Coerce sentinels and anything older than canonical MIN to None
     if iv in SENTINEL_ZERO_MS or iv <= CANONICAL_MIN_MS:
         return None
@@ -108,7 +108,7 @@ def _from_secs_or_millis(v):
         except (TypeError, ValueError, OverflowError):
             return None
     else:
-        raise TypeError("Expected seconds or milliseconds since epoch as int/str")
+        raise ValueError("Expected seconds or milliseconds since epoch as int/str")
     try:
         # Heuristic: values < 1e11 are seconds (covers dates up to ~5138 CE)
         if abs(iv) < 100_000_000_000:
