@@ -168,7 +168,10 @@ class _UrlRenderer(_Renderer):
 class _ImageRenderer(_Renderer):
     def render(self, ctx: AttachmentContext, render_note_cb: Callable) -> str:
         url = _safe_url(
-            ctx.primary_url or ctx.thumb_url,
+            ctx.primary_url,
+            allowed_schemes={"http", "https"},
+        ) or _safe_url(
+            ctx.thumb_url,
             allowed_schemes={"http", "https"},
         )
         alt = ctx.title or ctx.uti or "image"

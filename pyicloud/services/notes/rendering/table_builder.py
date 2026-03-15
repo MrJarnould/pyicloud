@@ -149,9 +149,12 @@ class TableBuilder:
                     continue
                 if not cell_ent.HasField("note"):
                     continue
-                cell_note = cell_ent.note
-                inner_html = self.render_note_cb(cell_note)
-                self.cells[row_pos][col_pos].html = inner_html
+                try:
+                    cell_note = cell_ent.note
+                    inner_html = self.render_note_cb(cell_note)
+                    self.cells[row_pos][col_pos].html = inner_html
+                except Exception:
+                    continue
 
     def render_html_table(self) -> Optional[str]:
         if not self.cells or self.rows.total == 0 or self.cols.total == 0:
@@ -182,13 +185,16 @@ def render_table_from_mergeable(
         payload = gzip.decompress(gz_bytes)
     except Exception:
         payload = gz_bytes
-    m = pb.MergableDataProto()
-    m.ParseFromString(payload)
-    data = m.mergable_data_object.mergeable_data_object_data
-    key_items = list(data.mergeable_data_object_key_item)
-    type_items = list(data.mergeable_data_object_type_item)
-    uuid_items = list(data.mergeable_data_object_uuid_item)
-    entries = list(data.mergeable_data_object_entry)
+    try:
+        m = pb.MergableDataProto()
+        m.ParseFromString(payload)
+        data = m.mergable_data_object.mergeable_data_object_data
+        key_items = list(data.mergeable_data_object_key_item)
+        type_items = list(data.mergeable_data_object_type_item)
+        uuid_items = list(data.mergeable_data_object_uuid_item)
+        entries = list(data.mergeable_data_object_entry)
+    except Exception:
+        return None
 
     tb = TableBuilder(
         key_items=key_items,
@@ -230,16 +236,28 @@ def render_table_from_mergeable(
         pending_cell_columns: Optional[pb.MergeableDataObjectRow] = None
         for me in e.custom_map.map_entry:
             kname = key_items[me.key] if 0 <= me.key < len(key_items) else None
-            target = entries[me.value.object_index]
+            try:
+                target = entries[me.value.object_index]
+            except Exception:
+                continue
             if kname == TABLE_SPEC.rows_key.value:
-                tb.parse_rows(target)
+                try:
+                    tb.parse_rows(target)
+                except Exception:
+                    continue
             elif kname == TABLE_SPEC.cols_key.value:
-                tb.parse_cols(target)
+                try:
+                    tb.parse_cols(target)
+                except Exception:
+                    continue
             elif kname == TABLE_SPEC.cellcols_key.value:
                 pending_cell_columns = target
         if tb.rows.total > 0 and tb.cols.total > 0:
             tb.init_table_buffers()
         if pending_cell_columns and tb.rows.total > 0 and tb.cols.total > 0:
-            tb.parse_cell_columns(pending_cell_columns)
+            try:
+                tb.parse_cell_columns(pending_cell_columns)
+            except Exception:
+                return None
         break
     return tb.render_html_table()

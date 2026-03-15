@@ -167,9 +167,30 @@ def authenticate(args: argparse.Namespace) -> PyiCloudService:
     api = PyiCloudService(apple_id=username, password=password)
 
     if api.requires_2fa:
-        code = input("Enter 2FA code: ").strip()
-        if not api.validate_2fa_code(code):
-            raise RuntimeError("Invalid 2FA code.")
+        key_names = list(api.security_key_names or [])
+        if key_names:
+            print("Security key verification required.")
+            for index, name in enumerate(key_names):
+                print(f"  {index}: {name}")
+            selected_index = 0
+            if len(key_names) > 1:
+                raw_index = input("Select security key [0]: ").strip()
+                if raw_index:
+                    selected_index = int(raw_index)
+                if selected_index < 0 or selected_index >= len(key_names):
+                    raise RuntimeError("Invalid security key selection.")
+            selected_name = key_names[selected_index]
+            print(f"Touch security key: {selected_name}")
+            try:
+                api.confirm_security_key()
+            except Exception as exc:  # pragma: no cover - live integration path
+                raise RuntimeError(
+                    f"Security key verification failed for {selected_name}."
+                ) from exc
+        else:
+            code = input("Enter 2FA code: ").strip()
+            if not api.validate_2fa_code(code):
+                raise RuntimeError("Invalid 2FA code.")
         if not api.is_trusted_session:
             print("Session is not trusted. Requesting trust...")
             api.trust_session()
@@ -339,7 +360,64 @@ def main() -> int:
             expected_time_zone: Optional[str] = None,
             expected_parent_reminder_id: Optional[str] = None,
         ) -> Reminder:
-            fresh = reminders_api.get(reminder_id)
+            matched: dict[str, Optional[Reminder]] = {"reminder": None}
+
+            def _matches_expectations(fresh: Reminder) -> bool:
+                if expected_title is not None and fresh.title != expected_title:
+                    return False
+                if expected_desc is not None and fresh.desc != expected_desc:
+                    return False
+                if (
+                    expected_completed is not None
+                    and fresh.completed != expected_completed
+                ):
+                    return False
+                if expected_due_date is not None and not approximately_same_time(
+                    fresh.due_date,
+                    expected_due_date,
+                ):
+                    return False
+                if (
+                    expected_priority is not None
+                    and fresh.priority != expected_priority
+                ):
+                    return False
+                if expected_flagged is not None and fresh.flagged != expected_flagged:
+                    return False
+                if expected_all_day is not None and fresh.all_day != expected_all_day:
+                    return False
+                if (
+                    expected_time_zone is not None
+                    and fresh.time_zone != expected_time_zone
+                ):
+                    return False
+                if (
+                    expected_parent_reminder_id is not None
+                    and fresh.parent_reminder_id != expected_parent_reminder_id
+                ):
+                    return False
+                return True
+
+            def _poll_round_trip() -> bool:
+                try:
+                    fresh = reminders_api.get(reminder_id)
+                except LookupError:
+                    return False
+                if not _matches_expectations(fresh):
+                    return False
+                matched["reminder"] = fresh
+                return True
+
+            wait_until(
+                f"{case_name} round-trip consistency",
+                _poll_round_trip,
+                args.consistency_timeout,
+                args.poll_interval,
+            )
+
+            fresh = matched["reminder"]
+            if fresh is None:
+                fresh = reminders_api.get(reminder_id)
 
             if expected_title is not None:
                 tracker.expect(

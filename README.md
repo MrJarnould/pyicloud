@@ -943,12 +943,19 @@ _Track incremental changes:_
 ```python
 reminders = api.reminders
 
+# Earlier run: capture and persist a cursor somewhere durable.
 cursor = reminders.sync_cursor()
+# save cursor to disk / database here
 
-for event in reminders.iter_changes(since=cursor):
+# Later run: reload the previously saved cursor before asking for deltas.
+loaded_cursor = cursor
+for event in reminders.iter_changes(since=loaded_cursor):
     print(event.type, event.reminder_id)
     if event.reminder is not None:
         print(event.reminder.title)
+
+# After processing, persist the new high-water mark for the next run.
+next_cursor = reminders.sync_cursor()
 ```
 
 `iter_changes(since=...)` yields `ReminderChangeEvent` objects. Updated

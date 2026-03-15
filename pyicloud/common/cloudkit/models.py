@@ -267,7 +267,7 @@ class CKEncryptedBytesField(_CKFieldBase):
 
 class CKReferenceField(_CKFieldBase):
     type: Literal["REFERENCE"]
-    value: CKReference
+    value: Optional[CKReference]
 
 
 class CKReferenceListField(_CKFieldBase):
@@ -279,7 +279,7 @@ class CKReferenceListField(_CKFieldBase):
 # three responses at the 'fields' level, but kept for completeness.
 class CKStringField(_CKFieldBase):
     type: Literal["STRING"]
-    value: str
+    value: Optional[str]
     isEncrypted: Optional[bool] = None  # seen on some STRING wrappers (lookup)
 
 

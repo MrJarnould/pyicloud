@@ -18,6 +18,7 @@ from pyicloud.services.notes.rendering.exporter import (
 )
 from pyicloud.services.notes.rendering.options import ExportConfig
 from pyicloud.services.notes.rendering.renderer import NoteRenderer, _safe_anchor_href
+from pyicloud.services.notes.rendering.table_builder import render_table_from_mergeable
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "note_fixture.json")
 with open(FIXTURE_PATH, "r", encoding="utf-8") as fixture_file:
@@ -225,6 +226,26 @@ class TestNoteRendering(unittest.TestCase):
         )
 
         self.assertNotIn("src=", html)
+
+    def test_image_renderer_falls_back_to_valid_thumbnail(self):
+        html = render_attachment(
+            AttachmentContext(
+                id="att-4",
+                uti="public.image",
+                title="Image",
+                primary_url="javascript:alert(1)",
+                thumb_url="https://example.com/thumb.png",
+                mergeable_gz=None,
+            ),
+            lambda _: "",
+        )
+
+        self.assertIn('src="https://example.com/thumb.png"', html)
+
+    def test_render_table_from_mergeable_fails_closed_on_malformed_payload(self):
+        self.assertIsNone(
+            render_table_from_mergeable(b"not-a-table", lambda _: "<p>x</p>")
+        )
 
     def test_safe_anchor_href_allows_only_expected_schemes(self):
         self.assertEqual(

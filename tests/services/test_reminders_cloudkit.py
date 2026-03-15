@@ -34,6 +34,9 @@ from pyicloud.common.cloudkit import (
 from pyicloud.common.cloudkit.base import resolve_cloudkit_validation_extra
 from pyicloud.services.reminders._mappers import RemindersRecordMapper
 from pyicloud.services.reminders._protocol import (
+    CRDTDecodeError,
+)
+from pyicloud.services.reminders._protocol import (
     _decode_crdt_document as decode_crdt_document,
 )
 from pyicloud.services.reminders._protocol import (
@@ -347,12 +350,15 @@ class TestDecodeCrdtDocument:
         result = service._decode_crdt_document(TITLE_DOC_SAMPLES["Cancel Hoess"])
         assert result == "Cancel Hoess"
 
-    def test_decode_empty_returns_empty(self, service):
-        """Non-decodable data should return empty string, not crash."""
-        assert service._decode_crdt_document("") == ""
+    def test_decode_empty_raises(self, service):
+        with pytest.raises(CRDTDecodeError, match="Unable to decode CRDT document"):
+            service._decode_crdt_document("")
 
-    def test_decode_malformed_base64_returns_empty(self, service):
-        assert service._decode_crdt_document("!!!not-base64!!!") == ""
+    def test_decode_malformed_base64_raises(self, service):
+        with pytest.raises(
+            CRDTDecodeError, match="Invalid base64-encoded CRDT document"
+        ):
+            service._decode_crdt_document("!!!not-base64!!!")
 
     def test_decode_bytes_input(self, service):
         """Accept raw bytes as well as base64 string."""
@@ -473,6 +479,26 @@ class TestRecordToReminder:
         assert r.alarm_ids == ["alarm-1", "alarm-2"]
         assert r.hashtag_ids == ["hashtag-1"]
         assert r.attachment_ids == ["attach-1"]
+
+    def test_reminder_malformed_title_document_uses_placeholder(self, service):
+        rec = _ck_record(
+            "Reminder",
+            "REM-BAD-TITLE",
+            {
+                "TitleDocument": {
+                    "type": "ENCRYPTED_BYTES",
+                    "value": base64.b64encode(b"not-a-crdt").decode("ascii"),
+                },
+                "List": {
+                    "type": "REFERENCE",
+                    "value": {"recordName": "LIST-001", "action": "VALIDATE"},
+                },
+            },
+        )
+
+        reminder = service._record_to_reminder(rec)
+
+        assert reminder.title == "Error Decoding Title"
 
     def test_reminder_falls_back_to_record_audit_timestamps(self, service):
         created = datetime(2024, 12, 28, tzinfo=timezone.utc)
@@ -1456,6 +1482,40 @@ class TestAdditionalWriteApis:
         assert fields["ParentReminder"].value.recordName == "Reminder/PARENT-001"
         assert reminder.record_change_tag == "new-reminder-tag"
         assert reminder.modified == fields["LastModifiedDate"].value
+
+    def test_update_can_clear_optional_reminder_fields(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[
+                self._ack("Reminder/REM-UPD-CLEAR", "Reminder", "new-reminder-tag")
+            ],
+            syncToken="mock-sync",
+        )
+
+        reminder = Reminder(
+            id="Reminder/REM-UPD-CLEAR",
+            list_id="List/LIST-001",
+            title="Reminder",
+            desc="Body",
+            due_date=None,
+            time_zone=None,
+            parent_reminder_id=None,
+            record_change_tag="old-reminder-tag",
+        )
+
+        svc.update(reminder)
+
+        update_op = svc._raw.modify.call_args.kwargs["operations"][0]
+        fields = update_op.record.fields
+        assert fields["DueDate"].value is None
+        assert fields["TimeZone"].value is None
+        assert fields["ParentReminder"].value is None
+
+        token_map = json.loads(fields["ResolutionTokenMap"].value)
+        assert "dueDate" in token_map["map"]
+        assert "timeZone" in token_map["map"]
+        assert "parentReminder" in token_map["map"]
 
     def test_create_hashtag_hydrates_record_change_tags(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})

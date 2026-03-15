@@ -16,6 +16,10 @@ from .protobuf import reminders_pb2, versioned_document_pb2
 LOGGER = logging.getLogger(__name__)
 
 
+class CRDTDecodeError(ValueError):
+    """Raised when a Reminders CRDT payload cannot be decoded."""
+
+
 def _ref_name(fields, key: str) -> str:
     """Extract recordName from a REFERENCE field, or return ''."""
     field = fields.get_field(key)
@@ -89,8 +93,8 @@ def _decode_crdt_document(encrypted_value: str | bytes) -> str:
             data += "=" * padding
         try:
             data = base64.b64decode(data)
-        except (binascii.Error, ValueError):
-            return ""
+        except (binascii.Error, ValueError) as exc:
+            raise CRDTDecodeError("Invalid base64-encoded CRDT document") from exc
 
     try:
         data = zlib.decompress(data)
@@ -131,7 +135,7 @@ def _decode_crdt_document(encrypted_value: str | bytes) -> str:
     except Exception as exc:  # pragma: no cover - legacy fallback path
         LOGGER.debug("bare String parse failed: %s", exc)
 
-    return ""
+    raise CRDTDecodeError("Unable to decode CRDT document")
 
 
 def _encode_crdt_document(text: str) -> str:

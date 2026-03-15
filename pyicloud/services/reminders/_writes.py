@@ -382,10 +382,14 @@ class RemindersWriteAPI:
                 "type": "TIMESTAMP",
                 "value": int(due_date.timestamp() * 1000),
             }
-            fields_mod.append("dueDate")
+        else:
+            fields["DueDate"] = {"type": "TIMESTAMP", "value": None}
+        fields_mod.append("dueDate")
         if reminder.time_zone:
             fields["TimeZone"] = {"type": "STRING", "value": reminder.time_zone}
-            fields_mod.append("timeZone")
+        else:
+            fields["TimeZone"] = {"type": "STRING", "value": None}
+        fields_mod.append("timeZone")
         if reminder.parent_reminder_id:
             fields["ParentReminder"] = {
                 "type": "REFERENCE",
@@ -397,7 +401,9 @@ class RemindersWriteAPI:
                     "action": "VALIDATE",
                 },
             }
-            fields_mod.append("parentReminder")
+        else:
+            fields["ParentReminder"] = {"type": "REFERENCE", "value": None}
+        fields_mod.append("parentReminder")
         fields["ResolutionTokenMap"] = {
             "type": "STRING",
             "value": _generate_resolution_token_map(fields_mod),
