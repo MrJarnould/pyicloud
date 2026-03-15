@@ -134,6 +134,22 @@ class RemindersWriteAPI:
         )
 
     @staticmethod
+    def _completion_datetime(
+        *,
+        completed: bool,
+        completed_date: Optional[datetime],
+        now_ms: int,
+    ) -> Optional[datetime]:
+        """Resolve the completion timestamp to persist for a reminder write."""
+        if not completed:
+            return None
+        if completed_date is None:
+            return datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
+        if completed_date.tzinfo is None:
+            return completed_date.replace(tzinfo=timezone.utc)
+        return completed_date
+
+    @staticmethod
     def _write_record(
         *,
         record_name: str,
@@ -379,6 +395,10 @@ class RemindersWriteAPI:
         record_fields: dict[str, Any] = {
             "AllDay": {"type": "INT64", "value": 1 if all_day else 0},
             "Completed": {"type": "INT64", "value": 1 if completed else 0},
+            "CompletionDate": {
+                "type": "TIMESTAMP",
+                "value": now_ms if completed else None,
+            },
             "CreationDate": {"type": "TIMESTAMP", "value": now_ms},
             "Deleted": {"type": "INT64", "value": 0},
             "Flagged": {"type": "INT64", "value": 1 if flagged else 0},
@@ -443,16 +463,31 @@ class RemindersWriteAPI:
             "titleDocument",
             "notesDocument",
             "completed",
+            "completionDate",
             "priority",
             "flagged",
             "allDay",
             "lastModifiedDate",
         ]
+        completion_date = self._completion_datetime(
+            completed=reminder.completed,
+            completed_date=reminder.completed_date,
+            now_ms=now_ms,
+        )
+        completion_date_ms = (
+            int(completion_date.timestamp() * 1000)
+            if completion_date is not None
+            else None
+        )
 
         fields: dict[str, Any] = {
             "TitleDocument": {"type": "STRING", "value": title_doc},
             "NotesDocument": {"type": "STRING", "value": notes_doc},
             "Completed": {"type": "INT64", "value": 1 if reminder.completed else 0},
+            "CompletionDate": {
+                "type": "TIMESTAMP",
+                "value": completion_date_ms,
+            },
             "Priority": {"type": "INT64", "value": reminder.priority},
             "Flagged": {"type": "INT64", "value": 1 if reminder.flagged else 0},
             "AllDay": {"type": "INT64", "value": 1 if reminder.all_day else 0},
@@ -502,6 +537,7 @@ class RemindersWriteAPI:
             fields=fields,
             model_obj=reminder,
         )
+        reminder.completed_date = completion_date
         reminder.modified = datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
 
     def delete(self, reminder: Reminder) -> None:

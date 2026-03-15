@@ -1330,6 +1330,29 @@ class TestMutationErrorHandling:
         assert parent_field.value.recordName == "Reminder/PARENT-001"
         assert created.parent_reminder_id == "Reminder/PARENT-001"
 
+    def test_create_completed_reminder_sets_completion_date(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(records=[], syncToken="mock")
+        expected = Reminder(
+            id="Reminder/COMPLETE-001",
+            list_id="List/LIST-001",
+            title="Completed reminder",
+            completed=True,
+        )
+        svc._writes._lookup_created_reminder = MagicMock(return_value=expected)
+
+        svc.create(
+            list_id="List/LIST-001",
+            title="Completed reminder",
+            completed=True,
+        )
+
+        op = svc._raw.modify.call_args.kwargs["operations"][0]
+        completion_field = op.record.fields["CompletionDate"]
+        assert completion_field.type_tag == "TIMESTAMP"
+        assert completion_field.value is not None
+
 
 class TestAdditionalWriteApis:
     """Validate payload shape and local state updates for newly added write APIs."""
@@ -1607,12 +1630,14 @@ class TestAdditionalWriteApis:
         )
 
         due_date = datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc)
+        completed_date = datetime(2026, 3, 15, 9, 30, tzinfo=timezone.utc)
         reminder = Reminder(
             id="Reminder/REM-UPD-ALL",
             list_id="List/LIST-001",
             title="Reminder",
             desc="Body",
             completed=True,
+            completed_date=completed_date,
             due_date=due_date,
             priority=1,
             flagged=True,
@@ -1627,6 +1652,7 @@ class TestAdditionalWriteApis:
         update_op = svc._raw.modify.call_args.kwargs["operations"][0]
         fields = update_op.record.fields
         assert fields["Completed"].value == 1
+        assert fields["CompletionDate"].value == completed_date
         assert fields["Priority"].value == 1
         assert fields["Flagged"].value == 1
         assert fields["AllDay"].value == 1
@@ -1695,6 +1721,61 @@ class TestAdditionalWriteApis:
         assert "dueDate" in token_map["map"]
         assert "timeZone" in token_map["map"]
         assert "parentReminder" in token_map["map"]
+
+    def test_update_sets_completion_date_when_marked_completed_without_one(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[
+                self._ack("Reminder/REM-UPD-COMPLETE", "Reminder", "new-reminder-tag")
+            ],
+            syncToken="mock-sync",
+        )
+
+        reminder = Reminder(
+            id="Reminder/REM-UPD-COMPLETE",
+            list_id="List/LIST-001",
+            title="Reminder",
+            completed=True,
+            completed_date=None,
+            record_change_tag="old-reminder-tag",
+        )
+
+        svc.update(reminder)
+
+        update_op = svc._raw.modify.call_args.kwargs["operations"][0]
+        completion_value = update_op.record.fields["CompletionDate"].value
+        assert completion_value is not None
+        assert reminder.completed_date == completion_value
+
+    def test_update_clears_completion_date_when_marked_incomplete(self):
+        svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})
+        svc._raw = MagicMock()
+        svc._raw.modify.return_value = CKModifyResponse(
+            records=[
+                self._ack(
+                    "Reminder/REM-UPD-INCOMPLETE",
+                    "Reminder",
+                    "new-reminder-tag",
+                )
+            ],
+            syncToken="mock-sync",
+        )
+
+        reminder = Reminder(
+            id="Reminder/REM-UPD-INCOMPLETE",
+            list_id="List/LIST-001",
+            title="Reminder",
+            completed=False,
+            completed_date=datetime(2026, 3, 15, 9, 30, tzinfo=timezone.utc),
+            record_change_tag="old-reminder-tag",
+        )
+
+        svc.update(reminder)
+
+        update_op = svc._raw.modify.call_args.kwargs["operations"][0]
+        assert update_op.record.fields["CompletionDate"].value is None
+        assert reminder.completed_date is None
 
     def test_create_hashtag_hydrates_record_change_tags(self):
         svc = RemindersService("https://ckdatabasews.icloud.com", MagicMock(), {})

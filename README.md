@@ -947,8 +947,8 @@ reminders = api.reminders
 cursor = reminders.sync_cursor()
 # save cursor to disk / database here
 
-# Later run: reload the previously saved cursor before asking for deltas.
-loaded_cursor = cursor
+# Later run: reload the previously saved cursor from disk / database.
+loaded_cursor = stored_cursor_value
 for event in reminders.iter_changes(since=loaded_cursor):
     print(event.type, event.reminder_id)
     if event.reminder is not None:
