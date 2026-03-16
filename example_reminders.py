@@ -177,12 +177,11 @@ def _prompt_selection(
 
 
 def _trusted_device_label(device: dict[str, Any]) -> str:
-    return str(
-        device.get("deviceName")
-        or device.get("phoneNumber")
-        or device.get("id")
-        or "Unknown trusted device"
-    )
+    if device.get("phoneNumber"):
+        return "SMS trusted device"
+    if device.get("deviceName") or device.get("id"):
+        return "Trusted device"
+    return "Unknown trusted device"
 
 
 def _raw_token(value: str) -> str:
@@ -197,38 +196,21 @@ def authenticate(args: argparse.Namespace) -> PyiCloudService:
     api = PyiCloudService(apple_id=username, password=password)
 
     if api.requires_2fa:
-        key_names = list(api.security_key_names or [])
-        if key_names:
-            fido2_devices = list(api.fido2_devices)
-            if not fido2_devices:
-                raise RuntimeError(
-                    "Security key verification required but no FIDO2 devices were detected."
-                )
+        fido2_devices = list(api.fido2_devices)
+        if fido2_devices:
             print("Security key verification required.")
-            for index, device in enumerate(fido2_devices):
-                label = (
-                    key_names[index]
-                    if index < len(key_names)
-                    else f"Security key {index}"
-                )
-                print(f"  {index}: {label} ({device})")
+            for index, _device in enumerate(fido2_devices):
+                print(f"  {index}: Security key {index}")
             selected_index = _prompt_selection(
                 "Select security key",
                 fido2_devices,
             )
             selected_device = fido2_devices[selected_index]
-            selected_name = (
-                key_names[selected_index]
-                if selected_index < len(key_names)
-                else str(selected_device)
-            )
-            print(f"Touch security key: {selected_name}")
+            print("Touch the selected security key to continue.")
             try:
                 api.confirm_security_key(selected_device)
             except Exception as exc:  # pragma: no cover - live integration path
-                raise RuntimeError(
-                    f"Security key verification failed for {selected_name}."
-                ) from exc
+                raise RuntimeError("Security key verification failed.") from exc
         else:
             code = input("Enter 2FA code: ").strip()
             if not api.validate_2fa_code(code):
