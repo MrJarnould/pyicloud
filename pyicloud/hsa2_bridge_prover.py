@@ -7,10 +7,28 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pyicloud._optional_deps import security_key_extra_missing_error
+
+
+def _load_aes_gcm() -> tuple[Any, Any]:
+    """Lazily import ``AESGCM`` / ``InvalidTag`` from ``cryptography``.
+
+    The HSA2 trusted-device bridge encrypts/decrypts Apple's validation payload
+    with AES-GCM. The ``cryptography`` package is part of the optional
+    ``security-key`` extra so that the base install remains usable in
+    environments without prebuilt wheels.
+    """
+
+    try:
+        # pylint: disable=import-outside-toplevel
+        from cryptography.exceptions import InvalidTag
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError as exc:
+        raise security_key_extra_missing_error("HSA2 trusted-device bridge") from exc
+    return AESGCM, InvalidTag
+
 
 _SCRYPT_PARAMS = {
     "n": 16384,
@@ -506,6 +524,7 @@ class TrustedDeviceBridgeProver:
         """Decrypt Apple's final encrypted validation code."""
         if self._verifier_key is None:
             raise ValueError("Bridge verifier key is not available.")
+        aes_gcm_cls, invalid_tag_exc = _load_aes_gcm()
         try:
             payload = _b64_to_bytes(ciphertext_b64)
             version = payload[0]
@@ -513,13 +532,13 @@ class TrustedDeviceBridgeProver:
             iv = payload[1 : 1 + iv_length]
             tag = payload[1 + iv_length : 1 + iv_length + tag_length]
             ciphertext = payload[1 + iv_length + tag_length :]
-            plaintext = AESGCM(bytes.fromhex(self._verifier_key)).decrypt(
+            plaintext = aes_gcm_cls(bytes.fromhex(self._verifier_key)).decrypt(
                 iv,
                 ciphertext + tag,
                 bytes([version]),
             )
             return plaintext.decode("utf-8")
-        except (IndexError, KeyError, InvalidTag, UnicodeDecodeError) as exc:
+        except (IndexError, KeyError, invalid_tag_exc, UnicodeDecodeError) as exc:
             raise ValueError("Malformed bridge payload") from exc
 
 
@@ -568,10 +587,11 @@ class _TrustedDeviceBridgeServerProver:
         """Encrypt a plaintext validation code using Apple's AES-GCM payload layout."""
         if self._verifier_key is None:
             raise ValueError("Bridge verifier key is not available.")
+        aes_gcm_cls, _ = _load_aes_gcm()
         version = 0
         iv_length, tag_length = _AES_GCM_LAYOUTS[version]
         iv = secrets.token_bytes(iv_length)
-        encrypted = AESGCM(bytes.fromhex(self._verifier_key)).encrypt(
+        encrypted = aes_gcm_cls(bytes.fromhex(self._verifier_key)).encrypt(
             iv,
             plaintext.encode("utf-8"),
             bytes([version]),

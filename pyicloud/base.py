@@ -8,22 +8,20 @@ import time
 from dataclasses import dataclass
 from os import chmod, environ, makedirs, path, umask
 from tempfile import gettempdir
-from typing import Any, Dict, List, Mapping, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, cast
 from uuid import uuid1
 
 import srp
-from fido2.client import DefaultClientDataCollector, Fido2Client
-from fido2.hid import CtapHidDevice
-from fido2.webauthn import (
-    AuthenticationResponse,
-    PublicKeyCredentialDescriptor,
-    PublicKeyCredentialRequestOptions,
-    PublicKeyCredentialType,
-    UserVerificationRequirement,
-)
 from requests import HTTPError
 from requests.models import Response
 
+if TYPE_CHECKING:
+    from fido2.hid import CtapHidDevice
+
+from pyicloud._optional_deps import (
+    cryptography_available,
+    security_key_extra_missing_error,
+)
 from pyicloud.common.cloudkit.base import CloudKitExtraMode
 from pyicloud.const import ACCOUNT_NAME, CONTENT_TYPE_JSON, CONTENT_TYPE_TEXT
 from pyicloud.exceptions import (
@@ -882,7 +880,17 @@ class PyiCloudService:
         return boot_context
 
     def _supports_trusted_device_bridge(self) -> bool:
-        """Return whether Apple's HSA2 boot data prefers the bridge flow."""
+        """Return whether Apple's HSA2 boot data prefers the bridge flow.
+
+        The bridge handshake uses ``cryptography`` (P-256 ECDSA + AES-GCM),
+        which lives behind the optional ``security-key`` extra. When that
+        extra is not installed we report the bridge as unsupported so the
+        authentication flow falls back to SMS instead of raising at the
+        first signing call.
+        """
+
+        if not cryptography_available():
+            return False
 
         boot_context = self._current_hsa2_boot_context()
         return (
@@ -1028,12 +1036,38 @@ class PyiCloudService:
         return False
 
     @property
-    def fido2_devices(self) -> List[CtapHidDevice]:
-        """List the available FIDO2 devices."""
+    def fido2_devices(self) -> List["CtapHidDevice"]:
+        """List the available FIDO2 devices.
+
+        Requires the ``security-key`` extra (``pip install pyicloud[security-key]``);
+        returns an empty list if ``fido2`` is not installed so that callers
+        treating this as "do I have a security key available?" still work.
+        """
+        try:
+            from fido2.hid import (
+                CtapHidDevice,  # pylint: disable=import-outside-toplevel
+            )
+        except ImportError:
+            return []
         return list(CtapHidDevice.list_devices())
 
-    def confirm_security_key(self, device: Optional[CtapHidDevice] = None) -> None:
+    def confirm_security_key(self, device: Optional["CtapHidDevice"] = None) -> None:
         """Conduct the WebAuthn assertion ceremony with user's FIDO2 device."""
+        try:
+            # pylint: disable=import-outside-toplevel
+            from fido2.client import DefaultClientDataCollector, Fido2Client
+            from fido2.hid import CtapHidDevice
+            from fido2.webauthn import (
+                PublicKeyCredentialDescriptor,
+                PublicKeyCredentialRequestOptions,
+                PublicKeyCredentialType,
+                UserVerificationRequirement,
+            )
+        except ImportError as exc:
+            raise security_key_extra_missing_error(
+                "Security-key (FIDO2) authentication"
+            ) from exc
+
         fsa: dict[str, Any] = self._auth_data.get("fsaChallenge", {})
         try:
             challenge = fsa["challenge"]
@@ -1045,7 +1079,7 @@ class PyiCloudService:
             ) from error
 
         if not device:
-            devices: List[CtapHidDevice] = list(CtapHidDevice.list_devices())
+            devices = list(CtapHidDevice.list_devices())
 
             if not devices:
                 raise RuntimeError("No FIDO2 devices found")
@@ -1056,7 +1090,7 @@ class PyiCloudService:
             device,
             client_data_collector=DefaultClientDataCollector("https://apple.com"),
         )
-        credentials: List[PublicKeyCredentialDescriptor] = [
+        credentials = [
             PublicKeyCredentialDescriptor(
                 id=b64url_decode(cred_id), type=PublicKeyCredentialType("public-key")
             )
@@ -1068,9 +1102,7 @@ class PyiCloudService:
             allow_credentials=credentials,
             user_verification=UserVerificationRequirement("discouraged"),
         )
-        result: AuthenticationResponse = client.get_assertion(
-            assertion_options
-        ).get_response(0)
+        result = client.get_assertion(assertion_options).get_response(0)
 
         self._submit_webauthn_assertion_response(
             {

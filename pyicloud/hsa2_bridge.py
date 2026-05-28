@@ -15,11 +15,9 @@ import uuid
 from binascii import Error as BinasciiError
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Any, Callable, Mapping, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Protocol
 from urllib.parse import urlparse
 
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -30,11 +28,15 @@ from pydantic import (
     field_validator,
 )
 
+from pyicloud._optional_deps import security_key_extra_missing_error
 from pyicloud.exceptions import (
     PyiCloudTrustedDevicePromptException,
     PyiCloudTrustedDeviceVerificationException,
 )
 from pyicloud.hsa2_bridge_prover import TrustedDeviceBridgeProver
+
+if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric import ec
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1056,6 +1058,15 @@ class TrustedDeviceBridgeBootstrapper:
         user_agent: str,
     ) -> TrustedDeviceBridgeState:
         """Bootstrap Apple's trusted-device bridge until the first prompt payload arrives."""
+        try:
+            # pylint: disable=import-outside-toplevel
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError as exc:
+            raise security_key_extra_missing_error(
+                "HSA2 trusted-device bridge"
+            ) from exc
+
         topic = _resolve_apns_topic(boot_context)
         websocket_host = _resolve_websocket_host(boot_context)
         origin = _derive_origin(auth_endpoint)
@@ -1182,8 +1193,19 @@ class TrustedDeviceBridgeBootstrapper:
             "Failed to bootstrap the trusted-device bridge prompt."
         ) from last_error
 
-    def _generate_keypair(self) -> tuple[bytes, ec.EllipticCurvePrivateKey]:
+    def _generate_keypair(
+        self,
+    ) -> tuple[bytes, "ec.EllipticCurvePrivateKey"]:
         """Generate the ephemeral P-256 keypair used for websocket bootstrap."""
+        try:
+            # pylint: disable=import-outside-toplevel
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError as exc:
+            raise security_key_extra_missing_error(
+                "HSA2 trusted-device bridge"
+            ) from exc
+
         private_key = ec.generate_private_key(ec.SECP256R1())
         public_key = private_key.public_key().public_bytes(
             encoding=serialization.Encoding.X962,

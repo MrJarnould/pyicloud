@@ -38,6 +38,12 @@ from pyicloud.session import PyiCloudSession
 from pyicloud.utils import b64_encode
 from tests.const import LOGIN_2FA
 
+# fido2.client / fido2.webauthn read ``public_suffix_list.dat`` at module
+# import time. Force the read here at test-collection time, before the
+# session-scoped ``open`` mock in conftest starts blocking filesystem access.
+import fido2.client  # noqa: F401, isort: skip
+import fido2.webauthn  # noqa: F401, isort: skip
+
 
 def test_authenticate_with_force_refresh(pyicloud_service: PyiCloudService) -> None:
     """Test the authenticate method with force_refresh=True."""
@@ -693,8 +699,8 @@ def test_validate_2fa_code_failure(pyicloud_service: PyiCloudService) -> None:
         assert not pyicloud_service.validate_2fa_code("000000")
 
 
-@patch("pyicloud.base.CtapHidDevice.list_devices", return_value=[MagicMock()])
-@patch("pyicloud.base.Fido2Client")
+@patch("fido2.hid.CtapHidDevice.list_devices", return_value=[MagicMock()])
+@patch("fido2.client.Fido2Client")
 def test_confirm_security_key_success(
     mock_fido2_client_cls, mock_list_devices, pyicloud_service: PyiCloudService
 ) -> None:
@@ -1687,7 +1693,7 @@ def test_security_key_names_returns_key_names(
 def test_fido2_devices_lists_devices(pyicloud_service: PyiCloudService) -> None:
     """Test fido2_devices property lists devices."""
     with patch(
-        "pyicloud.base.CtapHidDevice.list_devices", return_value=[MagicMock()]
+        "fido2.hid.CtapHidDevice.list_devices", return_value=[MagicMock()]
     ) as mock_list:
         devices: List[CtapHidDevice] = pyicloud_service.fido2_devices
         assert isinstance(devices, list)
@@ -1702,7 +1708,7 @@ def test_confirm_security_key_no_devices_raises(
         "fsaChallenge": {"challenge": "c", "keyHandles": [], "rpId": "rp"}
     }
 
-    with patch("pyicloud.base.CtapHidDevice.list_devices", return_value=[]):
+    with patch("fido2.hid.CtapHidDevice.list_devices", return_value=[]):
         with pytest.raises(RuntimeError, match="No FIDO2 devices found"):
             pyicloud_service.confirm_security_key()
 

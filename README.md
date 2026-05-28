@@ -41,6 +41,29 @@ This installs the `icloud` command line interface alongside the Python package. 
 $ pip install pyicloud
 ```
 
+### Optional: security-key (FIDO2) and trusted-device bridge support
+
+Two authentication paths require compiled dependencies and are gated behind
+the `security-key` extra:
+
+- Security-key (FIDO2/WebAuthn) sign-in — `fido2`
+- Apple's HSA2 trusted-device bridge — `cryptography`
+
+Install the extra if your Apple ID uses either flow:
+
+```console
+$ pip install "pyicloud[security-key]"
+```
+
+Without the extra, those paths raise a clear `RuntimeError` pointing back at
+this install command, and the trusted-device bridge silently steps aside so
+2FA falls back to SMS when available. SMS, password-only flows, the iCloud
+Photos service, and every other service work without the extra.
+
+This keeps the base install usable in environments where `cryptography`
+wheels are not available and building from source is impractical, for
+example a-Shell on iOS.
+
 ## Authentication
 
 Authentication without using a saved password is as simple as passing your username and password to the `PyiCloudService` class:

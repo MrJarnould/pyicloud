@@ -1,0 +1,2 @@
+cryptography>=44.0.0
+fido2>=2.2.0
