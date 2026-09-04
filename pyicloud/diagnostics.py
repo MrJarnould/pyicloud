@@ -20,10 +20,12 @@ from dataclasses import dataclass
 from enum import Enum
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from io import BytesIO
 import platform
 import sys
 import time
 from typing import TYPE_CHECKING, Any
+import uuid
 
 from pyicloud.endpoints import WEBSERVICES, services_using
 from pyicloud.exceptions import (
@@ -44,6 +46,9 @@ UNKNOWN_VERSION = "unknown"
 # adds the same constant to pyicloud.exceptions; this can defer to it once that
 # merges, and until then the check works on `main` unchanged.
 GONE_STATUS = 410
+
+#: Connect and read timeouts for the upload probe.
+UPLOAD_PROBE_TIMEOUT: tuple[float, float] = (10.0, 60.0)
 
 
 def installed_version() -> str:
@@ -438,3 +443,111 @@ def probe_failures(results: tuple[ProbeResult, ...]) -> tuple[ProbeResult, ...]:
     """Return only the probe outcomes that mean something is broken."""
 
     return tuple(result for result in results if result.is_failure)
+
+
+#: The service name the upload probe reports under.
+UPLOAD_PROBE_SERVICE = "photos (upload)"
+
+#: The webservice key the upload flow lives on.
+UPLOAD_WEBSERVICE = "photosupload"
+
+#: A 1x1 transparent GIF: the smallest real image, and small enough that the
+#: probe costs nothing meaningful in bandwidth or in storage on Apple's side.
+PROBE_IMAGE: bytes = bytes.fromhex(
+    "47494638396101000100800000000000ffffff21f90401000000002c00000000"
+    "010001000002024401003b"
+)
+
+#: The zone the probe reserves an upload URL against. Reserving is not
+#: creating: nothing appears in the library until putAsset registers it.
+PROBE_ZONE = "PrimarySync"
+
+
+def probe_upload_path(
+    api: PyiCloudService,
+    findings: tuple[WebserviceFinding, ...] = (),
+) -> ProbeResult:
+    """Exercise the Photos upload endpoints without creating an asset.
+
+    This is the layer neither the service map nor the read probes can reach.
+    #316 was a *write* endpoint being withdrawn while every read still worked,
+    so a diagnostic that only reads would have reported a healthy account.
+
+    It runs the real flow as far as ``singleFileUpload`` and stops. ``putAsset``
+    is the step that registers an asset in the library, and it is deliberately
+    never called -- verified against a live account, whose asset count was
+    identical before and after. What remains is a few dozen bytes on Apple's
+    content host that nothing references.
+    """
+
+    base_url = _advertised_url(findings, UPLOAD_WEBSERVICE)
+    if base_url is None:
+        return ProbeResult(
+            service=UPLOAD_PROBE_SERVICE,
+            status=ProbeStatus.SKIPPED,
+            detail=f"{UPLOAD_WEBSERVICE} is not usable; see the service map above.",
+            elapsed_ms=0,
+        )
+
+    started = time.monotonic()
+    try:
+        _run_upload_probe(api, base_url)
+    except Exception as error:  # noqa: BLE001 - a probe must survive anything
+        status, detail = _classify(error)
+    else:
+        status, detail = ProbeStatus.OK, ""
+    return ProbeResult(
+        service=UPLOAD_PROBE_SERVICE,
+        status=status,
+        detail=detail,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+def _advertised_url(findings: tuple[WebserviceFinding, ...], key: str) -> str | None:
+    """Return a key's advertised URL, or None if it is missing or unusable.
+
+    Taken from the findings rather than resolved again. Calling
+    ``get_webservice_url`` here would make this module look like a dependant of
+    the key in the inventory's eyes, and the diagnostics are not a service.
+    """
+
+    for finding in findings:
+        if finding.key == key:
+            return None if finding.is_problem else finding.url
+    return None
+
+
+def _run_upload_probe(api: PyiCloudService, base_url: str) -> None:
+    """Reserve an upload URL and send the probe image to it, and stop there."""
+
+    # Imported here rather than at module scope on purpose. pyicloud.cli.app
+    # imports this module for installed_version(), so a top-level import would
+    # pull the whole Photos service chain into every CLI invocation, including
+    # `icloud --version`. Only this one probe needs it.
+    # pylint: disable-next=import-outside-toplevel
+    from pyicloud.services.photos_cloudkit.upload import (  # noqa: PLC0415
+        PhotosUploader,
+    )
+
+    uploader = PhotosUploader(
+        session=api.session,
+        base_url=base_url,
+        base_params=dict(api.params),
+        timeout=UPLOAD_PROBE_TIMEOUT,
+    )
+    client_id = str(uuid.uuid4())
+    urls = uploader.create_upload_url(
+        zone_name=PROBE_ZONE, assets={client_id: len(PROBE_IMAGE)}
+    )
+    if not urls:
+        raise CloudKitProbeError("createUploadUrl reserved no upload URL")
+
+    # From memory, not a temporary file: a diagnostic should not need to touch
+    # the user's disk to answer a question about Apple's endpoints.
+    uploader.send_stream(next(iter(urls.values())), BytesIO(PROBE_IMAGE))
+    # Deliberately no put_asset() call: that is what would create an asset.
+
+
+class CloudKitProbeError(RuntimeError):
+    """Raised when a probe gets a well-formed response that says nothing."""

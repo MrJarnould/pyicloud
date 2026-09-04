@@ -7,12 +7,14 @@ invented ones.
 
 from __future__ import annotations
 
+from io import BytesIO
 from typing import Any
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
 from pyicloud.diagnostics import (
+    PROBE_IMAGE,
     PROBED_SERVICES,
     SERVICE_PROBES,
     ProbeStatus,
@@ -22,6 +24,7 @@ from pyicloud.diagnostics import (
     installed_version,
     probe_failures,
     probe_services,
+    probe_upload_path,
     services_at_risk,
     webservice_problems,
 )
@@ -378,3 +381,132 @@ def test_probes_are_skipped_when_the_key_is_already_known_bad() -> None:
     # A service whose key is fine is still probed.
     assert by_service["calendar"].status is ProbeStatus.OK
     api.photos.assert_not_called()
+
+
+def _upload_findings(
+    url: str | None = "https://p51-photosupload.icloud.com:443",
+) -> Any:
+    """Findings in which `photosupload` is advertised at ``url``."""
+
+    advertised = _healthy_map()
+    if url is None:
+        del advertised["photosupload"]
+    else:
+        advertised["photosupload"] = {"url": url, "status": "active"}
+    return diagnose_webservices(advertised)
+
+
+def test_the_upload_probe_never_registers_an_asset(monkeypatch: Any) -> None:
+    """`putAsset` is the step that creates a photo, and must never be called.
+
+    This is the whole safety property of the probe: verified against a live
+    account whose asset count was identical before and after, and pinned here
+    so a later change cannot quietly complete the upload.
+    """
+
+    uploader = MagicMock()
+    uploader.create_upload_url.return_value = {"client-id": "https://content/upload"}
+    monkeypatch.setattr(
+        "pyicloud.services.photos_cloudkit.upload.PhotosUploader",
+        MagicMock(return_value=uploader),
+    )
+
+    result = probe_upload_path(MagicMock(), _upload_findings())
+
+    assert result.status is ProbeStatus.OK
+    uploader.create_upload_url.assert_called_once()
+    uploader.send_stream.assert_called_once()
+    uploader.put_asset.assert_not_called()
+    uploader.upload_status.assert_not_called()
+
+
+def test_the_upload_probe_sends_a_real_but_tiny_image(monkeypatch: Any) -> None:
+    """The reserved size and the bytes sent have to agree, or Apple rejects it."""
+
+    uploader = MagicMock()
+    uploader.create_upload_url.return_value = {"client-id": "https://content/upload"}
+    written: list[bytes] = []
+    uploader.send_stream.side_effect = lambda url, stream: written.append(stream.read())
+    monkeypatch.setattr(
+        "pyicloud.services.photos_cloudkit.upload.PhotosUploader",
+        MagicMock(return_value=uploader),
+    )
+
+    probe_upload_path(MagicMock(), _upload_findings())
+
+    reserved = uploader.create_upload_url.call_args.kwargs["assets"]
+    assert list(reserved.values()) == [len(PROBE_IMAGE)]
+    assert written == [PROBE_IMAGE]
+    assert PROBE_IMAGE.startswith(b"GIF89a")
+
+
+def test_the_upload_probe_touches_no_files(monkeypatch: Any) -> None:
+    """The probe sends from memory, so it needs nothing from the filesystem.
+
+    An earlier version wrote a temporary file, which the suite's own
+    filesystem guard rejected -- correctly: a diagnostic answering a question
+    about Apple's endpoints has no business touching the user's disk.
+    """
+
+    uploader = MagicMock()
+    uploader.create_upload_url.return_value = {"client-id": "https://content/upload"}
+    monkeypatch.setattr(
+        "pyicloud.services.photos_cloudkit.upload.PhotosUploader",
+        MagicMock(return_value=uploader),
+    )
+
+    probe_upload_path(MagicMock(), _upload_findings())
+
+    stream = uploader.send_stream.call_args.args[1]
+    assert isinstance(stream, BytesIO)
+
+
+def test_the_upload_probe_is_skipped_when_the_key_is_unusable() -> None:
+    """No point calling a host the service map already reported as missing."""
+
+    result = probe_upload_path(MagicMock(), _upload_findings(url=None))
+
+    assert result.status is ProbeStatus.SKIPPED
+    assert result.elapsed_ms == 0
+    assert "photosupload" in result.detail
+
+
+def test_a_withdrawn_upload_endpoint_fails_the_run(monkeypatch: Any) -> None:
+    """The case this probe exists for: a 410 on the write path.
+
+    The service map cannot see this -- the host is still advertised -- and the
+    read probes cannot either, because every read still works. That is exactly
+    what happened in #316.
+    """
+
+    uploader = MagicMock()
+    uploader.create_upload_url.side_effect = PyiCloudAPIResponseException("Gone", 410)
+    monkeypatch.setattr(
+        "pyicloud.services.photos_cloudkit.upload.PhotosUploader",
+        MagicMock(return_value=uploader),
+    )
+
+    result = probe_upload_path(MagicMock(), _upload_findings())
+
+    assert result.status is ProbeStatus.GONE
+    assert result.is_failure
+    assert "410" in result.detail
+
+
+def test_an_empty_reservation_is_reported_rather_than_ignored(
+    monkeypatch: Any,
+) -> None:
+    """A 200 that reserves nothing is a failure, not a pass."""
+
+    uploader = MagicMock()
+    uploader.create_upload_url.return_value = {}
+    monkeypatch.setattr(
+        "pyicloud.services.photos_cloudkit.upload.PhotosUploader",
+        MagicMock(return_value=uploader),
+    )
+
+    result = probe_upload_path(MagicMock(), _upload_findings())
+
+    assert result.status is ProbeStatus.ERROR
+    assert result.is_failure
+    uploader.send_stream.assert_not_called()

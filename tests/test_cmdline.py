@@ -20,7 +20,12 @@ import click
 import pytest
 from typer.testing import CliRunner, Result
 
-from pyicloud.diagnostics import PROBED_SERVICES
+from pyicloud.diagnostics import (
+    PROBED_SERVICES,
+    UPLOAD_PROBE_SERVICE,
+    ProbeResult,
+    ProbeStatus,
+)
 from pyicloud.endpoints import WEBSERVICES
 from pyicloud.exceptions import (
     PyiCloudAPIResponseException,
@@ -58,6 +63,7 @@ from pyicloud.services.reminders.models import (
 
 account_index_module = importlib.import_module("pyicloud.cli.account_index")
 cli_module = importlib.import_module("pyicloud.cli.app")
+doctor_module = importlib.import_module("pyicloud.cli.commands.doctor")
 context_module = importlib.import_module("pyicloud.cli.context")
 output_module = importlib.import_module("pyicloud.cli.output")
 app = cli_module.app
@@ -4558,3 +4564,54 @@ def test_doctor_probe_json_includes_every_result() -> None:
     assert probes["calendar"]["status"] == "ok"
     assert probes["calendar"]["is_failure"] is False
     assert set(probes) == set(PROBED_SERVICES)
+
+
+def test_doctor_does_not_probe_uploads_without_the_flag() -> None:
+    """The upload probe writes bytes to Apple, so it must be asked for."""
+
+    fake_api, _services = _probing_api()
+    with patch.object(doctor_module, "probe_upload_path") as upload_probe:
+        result = _invoke(fake_api, "doctor", "--probe")
+
+    assert result.exit_code == 0
+    upload_probe.assert_not_called()
+
+
+def test_doctor_probe_uploads_adds_one_row() -> None:
+    """--probe-uploads works on its own, without --probe."""
+
+    fake_api, services = _probing_api()
+    probe_result = ProbeResult(
+        service=UPLOAD_PROBE_SERVICE, status=ProbeStatus.OK, detail="", elapsed_ms=12
+    )
+    with patch.object(
+        doctor_module, "probe_upload_path", return_value=probe_result
+    ) as upload_probe:
+        result = _invoke(fake_api, "doctor", "--probe-uploads", output_format="json")
+    payload = json.loads(result.stdout)
+
+    assert result.exit_code == 0
+    upload_probe.assert_called_once()
+    # The service probes did not run; only the upload one did.
+    services["calendar"].get_calendars.assert_not_called()
+    assert [item["service"] for item in payload["probes"]] == [UPLOAD_PROBE_SERVICE]
+
+
+def test_doctor_reports_a_withdrawn_upload_endpoint() -> None:
+    """A 410 on the write path is the failure this tier exists to catch."""
+
+    fake_api, _services = _probing_api()
+    gone = ProbeResult(
+        service=UPLOAD_PROBE_SERVICE,
+        status=ProbeStatus.GONE,
+        detail="Apple no longer serves this endpoint (410).",
+        elapsed_ms=30,
+    )
+    with patch.object(doctor_module, "probe_upload_path", return_value=gone):
+        result = _invoke(fake_api, "doctor", "--probe-uploads")
+    text = _unwrapped(result)
+
+    assert result.exit_code == 1
+    assert "GONE" in text
+    assert "photos (upload)" in text
+    assert "pyicloud needs updating" in text

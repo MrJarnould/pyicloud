@@ -32,6 +32,7 @@ from pyicloud.cli.options import (
 from pyicloud.cli.output import console_kv_table, console_table
 from pyicloud.diagnostics import (
     SERVICE_PROBES,
+    UPLOAD_PROBE_SERVICE,
     ProbeResult,
     ProbeStatus,
     WebserviceFinding,
@@ -40,6 +41,7 @@ from pyicloud.diagnostics import (
     environment,
     probe_failures,
     probe_services,
+    probe_upload_path,
     services_at_risk,
     webservice_problems,
 )
@@ -61,6 +63,19 @@ PROBE_LABELS: dict[ProbeStatus, str] = {
     ProbeStatus.ERROR: "ERROR",
     ProbeStatus.SKIPPED: "skipped",
 }
+
+UploadProbeOption = Annotated[
+    bool,
+    typer.Option(
+        "--probe-uploads",
+        help=(
+            "Additionally exercise the Photos upload endpoints. Reserves an "
+            "upload URL and sends a 43-byte image, then stops before the step "
+            "that would register it, so nothing appears in your library."
+        ),
+        rich_help_panel="Output & Diagnostics",
+    ),
+]
 
 ProbeOption = Annotated[
     bool,
@@ -285,6 +300,8 @@ def _print_probes(state: CLIState, results: tuple[ProbeResult, ...]) -> None:
 def _probe_description(service: str) -> str:
     """Return what the probe for a service actually did."""
 
+    if service == UPLOAD_PROBE_SERVICE:
+        return "reserves an upload and sends 43 bytes"
     return next(
         (probe.describe for probe in SERVICE_PROBES if probe.service == service), ""
     )
@@ -347,15 +364,17 @@ def doctor(  # noqa: PLR0913
     http_proxy: HttpProxyOption = None,
     https_proxy: HttpsProxyOption = None,
     probe: ProbeOption = False,
+    probe_uploads: UploadProbeOption = False,
     no_verify_ssl: NoVerifySslOption = False,
     output_format: OutputFormatOption = DEFAULT_OUTPUT_FORMAT,
     log_level: LogLevelOption = DEFAULT_LOG_LEVEL,
 ) -> None:
     """Check the local install, the session, and Apple's advertised services.
 
-    Read-only: nothing here modifies the account. With --probe it additionally
-    calls each service once, which is the only way to catch an endpoint that
-    has been withdrawn behind a host Apple still advertises.
+    With --probe it additionally calls each service once, which is the only way
+    to catch an endpoint that has been withdrawn behind a host Apple still
+    advertises. With --probe-uploads it also exercises the Photos upload
+    endpoints, stopping before the step that would register an asset.
 
     Exits non-zero when a problem is found, and also when there is no session,
     since the checks that matter could not be run at all.
@@ -389,11 +408,15 @@ def doctor(  # noqa: PLR0913
     # Gated on the session too, for the same reason the findings are: calling
     # every service with a session that reports unauthenticated would produce
     # a page of failures that say nothing about the library.
-    probes = (
-        probe_services(api, findings)
-        if (probe and api is not None and authenticated)
-        else ()
-    )
+    # Gated on the session too, for the same reason the findings are: calling
+    # services with a session that reports unauthenticated would produce a page
+    # of failures that say nothing about the library.
+    probes: tuple[ProbeResult, ...] = ()
+    if api is not None and authenticated:
+        if probe:
+            probes = probe_services(api, findings)
+        if probe_uploads:
+            probes = (*probes, probe_upload_path(api, findings))
     # Not being logged in is not a defect, but it does mean nothing was
     # verified -- reporting that as success would mislead anything scripting
     # against the exit code.

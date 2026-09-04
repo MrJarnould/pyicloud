@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import urlencode, urlparse
 from uuid import uuid4
 
@@ -148,7 +148,17 @@ class PhotosUploader:
         return dict(parsed.uploadUrls)
 
     def send_bytes(self, url: str, path: Path) -> PhotosSingleFileUpload:
-        """Send the file at ``path`` to a reserved upload ``url``.
+        """Send the file at ``path`` to a reserved upload ``url``."""
+
+        with path.open("rb") as handle:
+            return self.send_stream(url, handle)
+
+    def send_stream(self, url: str, stream: BinaryIO) -> PhotosSingleFileUpload:
+        """Send an open binary stream to a reserved upload ``url``.
+
+        Split out from :meth:`send_bytes` so a caller that already holds the
+        bytes -- the doctor's upload probe, which sends a few dozen of them --
+        does not have to put them on disk first.
 
         The URL is echoed from Apple's reservation response and carries its own
         access token, so the scheme is checked before any bytes leave: a
@@ -160,8 +170,7 @@ class PhotosUploader:
             raise CloudKitApiError(
                 "Photos upload URL is not HTTPS; refusing to send file data"
             )
-        with path.open("rb") as handle:
-            response = self._session.post(url=url, data=handle, timeout=self._timeout)
+        response = self._session.post(url=url, data=stream, timeout=self._timeout)
         data = response_json(response, context="Photos singleFileUpload")
         try:
             parsed = PhotosSingleFileUploadResponse.model_validate(data)

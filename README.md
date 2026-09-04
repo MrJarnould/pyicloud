@@ -403,6 +403,26 @@ seconds in total. Every probe is a GET or the service's own documented
 refresh; none of them writes, and Find My is refreshed without asking your
 devices to report their location.
 
+### Probing the upload path (`--probe-uploads`)
+
+The read probes above call read endpoints. The failure that motivated this
+command was a _write_ endpoint being withdrawn while every read still
+worked, so reads alone would have reported a healthy account.
+
+```console
+icloud doctor --probe-uploads
+```
+
+This reserves an upload URL and sends a 43-byte image to it, then stops.
+`putAsset` is the step that registers an asset in your library, and it is
+never called — verified against a real account whose photo count was
+identical before and after. Nothing appears in your library, nothing needs
+cleaning up, and the probe writes nothing to your disk. What remains is a
+few dozen bytes on Apple's content host that nothing references.
+
+It is a separate flag from `--probe` because it sends data to Apple rather
+than only reading. Neither flag implies the other.
+
 Two outcomes are shown but do not fail the run, because neither is a
 pyicloud defect: `unavailable` means Apple reports the service as
 unavailable for your account (a Ubiquity library migrated to iCloud Drive,
